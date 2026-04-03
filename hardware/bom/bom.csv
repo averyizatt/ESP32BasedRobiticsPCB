@@ -1,0 +1,21 @@
+Reference,Qty,Value,Footprint,Description
+U1,1,ESP32-S3-WROOM-1,RF_Module:ESP32-S3-WROOM-1,ESP32-S3 WiFi+BT module
+U2,1,DRV8871,Package_SO:HSOP-8_3.9x4.9mm_P1.27mm,H-bridge motor driver (Motor 1)
+U3,1,DRV8871,Package_SO:HSOP-8_3.9x4.9mm_P1.27mm,H-bridge motor driver (Motor 2)
+U4,1,AMS1117-3.3,Package_TO_SOT_SMD:SOT-223-3_TabPin2,3.3V 1A LDO regulator
+C1,1,100uF,CP_EIA-3528-12_AVX-H,Bulk decoupling — input power
+C2,1,10uF,C_0805_2012Metric,Bulk decoupling — 3.3V rail
+C3-C10,8,100nF,C_0402_1005Metric,Decoupling — ESP32-S3 VDD pins
+C11-C12,2,10uF,C_0805_2012Metric,Decoupling — DRV8871 VM
+C13-C14,2,100nF,C_0402_1005Metric,Decoupling — DRV8871 VCC
+C15-C16,2,100nF,C_0402_1005Metric,Decoupling — DRV8871 VM HF
+R1-R2,2,10k,R_0402_1005Metric,I2C SDA/SCL pull-up
+R3-R5,3,10k,R_0402_1005Metric,Button pull-up (if not using internal)
+J1-J4,4,Conn_01x04,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,Ultrasonic sensor header (VCC GND TRIG ECHO)
+J5-J6,2,Conn_01x03,Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical,Hall sensor header (VCC GND SIG)
+J7-J8,2,Conn_01x02,Connector_Screw_PitchMetric:ScrewTerminal_1x02_P5.0mm,Motor terminal
+J9,1,Conn_01x08,Connector_PinHeader_2.54mm:PinHeader_1x08_P2.54mm_Vertical,Expansion GPIO header
+J10,1,Conn_01x07,Connector_PinHeader_2.54mm:PinHeader_1x07_P2.54mm_Vertical,SPI display header
+J11,1,Conn_01x02,Connector_Screw_PitchMetric:ScrewTerminal_1x02_P5.0mm,Power input (VM)
+J12,1,Conn_01x04,Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical,I2C IMU header
+SW1-SW3,3,SW_Push,Button_SMD:SW_SPST_TL3342,Tactile push button

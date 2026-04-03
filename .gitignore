@@ -1,0 +1,49 @@
+# =============================================================================
+# ESP32-S3 Robotics Controller — .gitignore
+# =============================================================================
+
+# --- KiCad ---
+# Auto-generated backups and caches
+hardware/**/*.bak
+hardware/**/*-backups/
+hardware/**/*.kicad_prl
+hardware/**/_autosave-*
+hardware/**/*.lck
+
+# KiCad 6/7 local project settings (machine-specific)
+hardware/**/*.kicad_pro.bak
+
+# KiCad annotation/rescue
+hardware/**/*-rescue.kicad_sym
+hardware/**/*-cache.kicad_sym
+hardware/**/*-cache.lib
+
+# --- Arduino / PlatformIO build artifacts ---
+firmware/**/.pio/
+firmware/**/.pioenvs/
+firmware/**/.piolibdeps/
+firmware/**/build/
+firmware/**/*.hex
+firmware/**/*.elf
+firmware/**/*.bin
+firmware/**/*.map
+
+# --- PlatformIO ---
+.pio/
+
+# --- macOS ---
+.DS_Store
+**/.DS_Store
+
+# --- Windows ---
+Thumbs.db
+desktop.ini
+
+# --- Linux ---
+*~
+
+# --- Editors ---
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
