@@ -4,6 +4,12 @@ A 4-layer, ESP32-S3 based robotics controller hub designed to consolidate motor 
 
 ## Board Overview
 
+![PCB Layout](https://github.com/user-attachments/assets/de8ea07d-7a7d-4f35-b29c-0b182f77b6d8)
+
+![PCB 3D Render](https://github.com/user-attachments/assets/73806aac-859a-40c9-a0b6-220a0715fab4)
+
+![PCB Back](https://github.com/user-attachments/assets/2d12b77d-34e1-484e-9a60-13efce319d09)
+
 At the core of the system is the **ESP32-S3**, chosen for its processing capability, flexible GPIO matrix, integrated WiFi and Bluetooth, and strong support for real-time control tasks.
 
 ### Integrated Features
