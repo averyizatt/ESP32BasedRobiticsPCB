@@ -37,10 +37,18 @@
 // --- I2C (IMU) ---
 #define I2C_SDA_PIN   18
 #define I2C_SCL_PIN   21
+#define I2C_CLOCK_HZ  400000UL  // 400 kHz fast-mode
 
-// --- SPI Display ---
-#define DISPLAY_MOSI  33
-#define DISPLAY_SCLK  34
+// --- Onboard RGB LED (WS2812 / NeoPixel on ESP32-S3-DevKitC-1) ---
+#define LED_PIN       48
+
+// --- Potentiometer (analog dial for menu navigation) ---
+// Repurposed from SERVO2_PIN (GPIO 9) — ADC1 channel.
+#define POT_PIN       9
+
+// --- SPI Display (I2C-style labels: SDA=MOSI, SCL=SCLK) ---
+#define DISPLAY_MOSI  37   // SDA on module
+#define DISPLAY_SCLK  38   // SCL on module
 #define DISPLAY_CS    35
 #define DISPLAY_DC    36
 #define DISPLAY_RES   39
@@ -48,7 +56,7 @@
 // --- Push Buttons (active LOW with internal pull-up) ---
 #define BUTTON1_PIN   41
 #define BUTTON2_PIN   42
-#define BUTTON3_PIN   47
+// BTN3 not populated in the current 2-button UI
 
 // --- Hall Effect Sensors ---
 #define HALL1_PIN     1
@@ -56,8 +64,9 @@
 
 // --- Expansion Header GPIO ---
 // These pins are broken out on the expansion header for future use.
-// #define EXP_GPIO_37  37
-// #define EXP_GPIO_38  38
+// #define EXP_GPIO_37  37   // now used: DISPLAY_MOSI
+// #define EXP_GPIO_38  38   // now used: DISPLAY_SCLK
+// #define EXP_GPIO_39  39   // now used: DISPLAY_RES
 // #define EXP_GPIO_40  40
 // #define EXP_GPIO_43  43
 // #define EXP_GPIO_44  44
@@ -78,9 +87,6 @@
 // --- Ultrasonic ---
 #define ULTRASONIC_TIMEOUT_US   30000UL // 30 ms → ~5 m max range
 #define SOUND_SPEED_CM_PER_US   0.0343f // cm per µs (at ~20°C)
-
-// --- I2C ---
-#define I2C_CLOCK_HZ    400000  // 400 kHz fast mode
 
 // --- Buttons ---
 #define BUTTON_DEBOUNCE_MS  20

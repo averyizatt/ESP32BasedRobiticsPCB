@@ -5,27 +5,92 @@
 #include "config.h"
 
 // =============================================================================
-// SPI Display Interface
-// =============================================================================
-// Wraps a generic SPI display driver (e.g., ST7735, ST7789, ILI9341).
-// Replace the driver includes and constructor below with the one matching
-// your specific display module.
-//
-// Required library: Adafruit GFX + your display-specific Adafruit driver,
-// OR TFT_eSPI configured for your display panel.
+// SPI Display Interface — 0.96" TFT (160×80, ST7735S)
 // =============================================================================
 
-// Initialise SPI bus and display. Call once in setup().
+// --- Panel geometry ----------------------------------------------------------
+static constexpr int16_t  DISP_W    = 160;   // pixels wide
+static constexpr int16_t  DISP_H    =  80;   // pixels tall
+static constexpr uint8_t  ROW_PX    =   8;   // pixels per text row (size-1 font)
+
+// --- Colour palette (RGB565) — Material Design dark theme ------------------
+static constexpr uint16_t C_BLACK    = 0x0000;
+static constexpr uint16_t C_WHITE    = 0xFFFF;
+static constexpr uint16_t C_GREEN    = 0x07E0;
+static constexpr uint16_t C_RED      = 0xF800;
+static constexpr uint16_t C_CYAN     = 0x07FF;
+static constexpr uint16_t C_YELLOW   = 0xFFE0;
+static constexpr uint16_t C_MAGENTA  = 0xF81F;
+static constexpr uint16_t C_ORANGE   = 0xFD20;
+static constexpr uint16_t C_GREY     = 0x7BEF;   // medium emphasis text
+static constexpr uint16_t C_DKGREY   = 0x39E7;   // borders, disabled text
+static constexpr uint16_t C_LTGREY   = 0xC618;   // secondary text
+static constexpr uint16_t C_NAVY     = 0x000F;
+static constexpr uint16_t C_DKBLUE   = 0x0318;
+static constexpr uint16_t C_BLUE     = 0x001F;
+static constexpr uint16_t C_ACCENT   = 0x5CDA;   // steel blue  (#5B99D5)
+static constexpr uint16_t C_ACCENT2  = 0xED46;   // warm amber  (#EEAA31)
+static constexpr uint16_t C_BG       = 0x1082;   // charcoal    (#121212)
+static constexpr uint16_t C_PANEL    = 0x2945;   // elevated surface (#282830)
+static constexpr uint16_t C_HILIGHT  = 0x7E3D;   // light blue  (#7BC6EE)
+
+// Helper: make RGB565 from 5-bit R, 6-bit G, 5-bit B
+static inline constexpr uint16_t RGB565(uint8_t r, uint8_t g, uint8_t b) {
+    return ((uint16_t)(r & 0x1F) << 11) | ((uint16_t)(g & 0x3F) << 5) | (b & 0x1F);
+}
+
+// Blend two RGB565 colours — alpha 0=a, 255=b
+uint16_t colour_blend(uint16_t a, uint16_t b, uint8_t alpha);
+
+// --- Low-level driver --------------------------------------------------------
 void display_init();
-
-// Clear the display to black.
-void display_clear();
-
-// Print a line of text at the given row (0-indexed, ~10 px per row).
-void display_print_line(uint8_t row, const String &text);
-
-// Draw a simple key=value status line (used for telemetry).
-void display_status(uint8_t row, const char *label, float value);
-
-// Flush / refresh the display if using a buffered driver.
+void display_fill(uint16_t colour);
 void display_update();
+
+// --- Primitives --------------------------------------------------------------
+void display_fill_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t colour);
+void display_hline(int16_t x, int16_t y, int16_t w, uint16_t colour);
+void display_vline(int16_t x, int16_t y, int16_t h, uint16_t colour);
+void display_rect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t colour);
+void display_pixel(int16_t x, int16_t y, uint16_t colour);
+void display_circle(int16_t cx, int16_t cy, int16_t r, uint16_t colour);
+void display_fill_circle(int16_t cx, int16_t cy, int16_t r, uint16_t colour);
+void display_triangle(int16_t x0, int16_t y0,
+                      int16_t x1, int16_t y1,
+                      int16_t x2, int16_t y2, uint16_t colour);
+
+// Draw a string at pixel coordinates. size 1=6×8, 2=12×16.
+void display_text(int16_t x, int16_t y, const char *str,
+                  uint16_t fg, uint16_t bg, uint8_t size = 1);
+
+// Draw centred string inside a pixel-coordinate box [x, x+w).
+void display_text_centred(int16_t x, int16_t y, int16_t w,
+                          const char *str, uint16_t fg, uint16_t bg,
+                          uint8_t size = 1);
+
+// --- High-level UI -----------------------------------------------------------
+void display_clear();
+void display_clear_bg();   // fill with C_BG instead of black
+
+// Header bar with gradient-look (two-tone) and bottom accent line.
+void display_header(const char *title, uint8_t height = 13);
+
+// Thin separator line.
+void display_separator(int16_t y, uint16_t colour = C_DKGREY);
+
+// Print a raw text row (row × ROW_PX pixels from top).
+void display_row(uint8_t row, const char *text,
+                 uint16_t fg = C_WHITE, uint16_t bg = C_BG);
+
+// Styled key-value row with right-aligned coloured value.
+void display_kv(int16_t px_y, const char *key, const char *value,
+                uint16_t val_colour = C_ACCENT);
+
+// Boot self-test row: spinner → OK/ERR badge.
+void display_check(uint8_t row, const char *label, bool ok);
+
+// Smooth horizontal progress bar at pixel y.
+void display_bar(int16_t y, uint8_t percent, uint16_t fill_colour = C_ACCENT);
+
+// Styled footer with two labelled button hints.
+void display_footer(const char *left_hint, const char *right_hint);

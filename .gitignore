@@ -27,6 +27,8 @@ firmware/**/*.hex
 firmware/**/*.elf
 firmware/**/*.bin
 firmware/**/*.map
+# PlatformIO build dir at workspace root (configured in platformio.ini)
+.pio/
 
 # --- PlatformIO ---
 .pio/

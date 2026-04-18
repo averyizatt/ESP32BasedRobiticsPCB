@@ -29,6 +29,9 @@ struct ImuData {
 // Initialise I2C bus and IMU. Returns true on success.
 bool imu_init();
 
+// Read latest sensor values. Returns false if the I2C read failed.
+bool imu_read(ImuData &data);
+
 // Read the latest sensor data into the provided struct.
 // Returns true if data was successfully retrieved.
 bool imu_read(ImuData &data);

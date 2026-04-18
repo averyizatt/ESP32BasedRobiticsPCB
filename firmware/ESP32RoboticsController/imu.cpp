@@ -1,44 +1,73 @@
 #include "imu.h"
 
 // =============================================================================
-// Placeholder IMU implementation.
-// Replace the body of imu_init() and imu_read() with calls to your chosen
-// IMU library once you have identified the specific sensor on your board.
+// MPU-6050 driver — raw I2C register reads, no external library required.
+// Supports both 0x68 (AD0=LOW) and 0x69 (AD0=HIGH) addresses.
 // =============================================================================
+
+static uint8_t _addr = 0x68;
+
+// Write one register byte; returns true on success.
+static bool _wreg(uint8_t reg, uint8_t val) {
+    Wire.beginTransmission(_addr);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+}
 
 bool imu_init() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_CLOCK_HZ);
 
-    // TODO: Add IMU library init, e.g. for MPU-6050:
-    // mpu.initialize();
-    // return mpu.testConnection();
-
-    // Probe the I2C bus to verify a device is present
-    Wire.beginTransmission(0x68); // Common MPU-6050 address
-    uint8_t error = Wire.endTransmission();
-    if (error == 0) {
-        Serial.println("[imu] device found at 0x68");
-        return true;
+    // Probe 0x68 then 0x69
+    for (uint8_t a = 0x68; a <= 0x69; a++) {
+        Wire.beginTransmission(a);
+        if (Wire.endTransmission() == 0) {
+            _addr = a;
+            Serial.printf("[imu] MPU-6050 at 0x%02X\n", a);
+            goto found;
+        }
     }
-
-    Wire.beginTransmission(0x69); // Alternate address
-    error = Wire.endTransmission();
-    if (error == 0) {
-        Serial.println("[imu] device found at 0x69");
-        return true;
-    }
-
-    Serial.println("[imu] no device found — check wiring and address");
+    Serial.println("[imu] no device found");
     return false;
+
+found:
+    _wreg(0x6B, 0x00);   // PWR_MGMT_1: clear sleep bit, use internal 8MHz osc
+    delay(100);
+    _wreg(0x19, 0x07);   // SMPLRT_DIV: 125 Hz output rate
+    _wreg(0x1A, 0x03);   // CONFIG: DLPF 44 Hz (reduces vibration noise)
+    _wreg(0x1B, 0x00);   // GYRO_CONFIG:  ±250 °/s
+    _wreg(0x1C, 0x00);   // ACCEL_CONFIG: ±2 g
+    return true;
 }
 
 bool imu_read(ImuData &data) {
-    // TODO: Replace with library read calls, e.g.:
-    // mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-    // data.accel_x = ax / 16384.0f * 9.81f;
-    // ...
+    // Burst-read 14 bytes starting at ACCEL_XOUT_H (0x3B)
+    Wire.beginTransmission(_addr);
+    Wire.write(0x3B);
+    if (Wire.endTransmission(false) != 0) return false;
 
-    // Zeroed placeholder until driver is wired up
-    data = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    return false;
+    uint8_t n = Wire.requestFrom(_addr, (uint8_t)14);
+    if (n < 14) return false;
+
+    auto rd16 = []() -> int16_t {
+        return (int16_t)((Wire.read() << 8) | Wire.read());
+    };
+
+    int16_t ax = rd16(), ay = rd16(), az = rd16();
+    int16_t tp = rd16();
+    int16_t gx = rd16(), gy = rd16(), gz = rd16();
+
+    // ±2 g range → 16384 LSB/g → convert to m/s²
+    constexpr float A = 9.81f / 16384.0f;
+    // ±250 °/s range → 131 LSB/(°/s)
+    constexpr float G = 1.0f / 131.0f;
+
+    data.accel_x = ax * A;
+    data.accel_y = ay * A;
+    data.accel_z = az * A;
+    data.gyro_x  = gx * G;
+    data.gyro_y  = gy * G;
+    data.gyro_z  = gz * G;
+    data.temp_c  = tp / 340.0f + 36.53f;
+    return true;
 }

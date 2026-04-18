@@ -1,7 +1,11 @@
 #include "motors.h"
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// arduino-esp32 2.x  LEDC API (channel-based)
+// ---------------------------------------------------------------------------
+// ledcSetup(channel, freq, resolution)
+// ledcAttachPin(pin, channel)
+// ledcWrite(channel, duty)
 // ---------------------------------------------------------------------------
 
 static void _motor_set_raw(uint8_t chA, uint8_t chB, int speed) {
@@ -18,10 +22,6 @@ static void _motor_set_raw(uint8_t chA, uint8_t chB, int speed) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 void motors_init() {
     // Motor 1
     ledcSetup(MOTOR1A_CHANNEL, MOTOR_PWM_FREQ, MOTOR_PWM_RESOLUTION);
@@ -35,7 +35,6 @@ void motors_init() {
     ledcAttachPin(MOTOR2_PWM_A, MOTOR2A_CHANNEL);
     ledcAttachPin(MOTOR2_PWM_B, MOTOR2B_CHANNEL);
 
-    // Start coasted
     motor_coast(MotorId::MOTOR1);
     motor_coast(MotorId::MOTOR2);
 }
@@ -61,3 +60,4 @@ void motor_coast(MotorId motor) {
     ledcWrite(chA, 0);
     ledcWrite(chB, 0);
 }
+
