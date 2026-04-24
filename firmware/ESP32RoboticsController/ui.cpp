@@ -9,6 +9,8 @@
 #include "imu.h"
 #include "led.h"
 #include "pot.h"
+#include "wifi_server.h"
+#include <WiFi.h>
 #include <math.h>
 
 // =============================================================================
@@ -47,6 +49,9 @@ enum class UiState : uint8_t {
     DEMO_HALL,          // hall effect / wheel speed demo
     DEMO_SERVO,         // servo sweep demo
     SCREEN_GAMES,       // arcade games sub-menu
+    SCREEN_WIFI,        // WiFi AP info
+    SCREEN_WIFI_SCAN,   // WiFi network scanner
+    SCREEN_BLE_SCAN,    // BLE device radar
     IDLE,
 };
 
@@ -88,9 +93,129 @@ static const MenuItem MENU_ITEMS[] = {
     { "Servo Demo","S", UiState::DEMO_SERVO       },
     { "System",    "i", UiState::SCREEN_SYSTEM    },
     { "Games",     "G", UiState::SCREEN_GAMES     },
+    { "WiFi Info",  "W", UiState::SCREEN_WIFI       },
+    { "WiFi Scan",  "w", UiState::SCREEN_WIFI_SCAN  },
+    { "BLE Radar",  "B", UiState::SCREEN_BLE_SCAN   },
 };
 static constexpr uint8_t MENU_LEN = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 static uint8_t _menu_idx = 0;
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Splash starfield — shared between boot animation and idle screen
+// ---------------------------------------------------------------------------
+struct _SStar { int16_t x; int8_t y; uint8_t spd; uint8_t bri; };
+static _SStar _ss[32];
+static bool   _ss_init = false;
+
+static void _splash_stars_reset() {
+    for (auto &s : _ss) {
+        s.x   = (int16_t)random(0, DISP_W);
+        s.y   = (int8_t) random(0, DISP_H);
+        s.spd = (uint8_t)random(1, 4);
+        s.bri = (uint8_t)random(25, 140);
+    }
+    _ss_init = true;
+}
+
+static void _splash_stars_tick(TFT_eSprite &spr) {
+    for (auto &s : _ss) {
+        s.x -= s.spd;
+        if (s.x < 0) {
+            s.x   = DISP_W - 1;
+            s.y   = (int8_t)random(0, DISP_H);
+            s.bri = (uint8_t)random(25, 140);
+            s.spd = (uint8_t)random(1, 4);
+        }
+        uint8_t b = s.bri + (s.spd - 1) * 25;
+        spr.drawPixel(s.x, s.y, colour_blend(C_BG, C_GREY, b));
+    }
+}
+
+// Direct-draw (no sprite) version — used by boot and idle
+static void _stars_tick_direct() {
+    TFT_eSPI *tft = display_get_tft();
+    for (auto &s : _ss) {
+        tft->drawPixel(s.x, s.y, C_BG);          // erase old position
+        s.x -= s.spd;
+        if (s.x < 0) {
+            s.x   = DISP_W - 1;
+            s.y   = (int8_t)random(0, DISP_H);
+            s.bri = (uint8_t)random(25, 140);
+            s.spd = (uint8_t)random(1, 4);
+        }
+        uint8_t b = s.bri + (s.spd - 1) * 25;
+        tft->drawPixel(s.x, s.y, colour_blend(C_BG, C_GREY, b));
+    }
+}
+
+// Procedural IC / chip logo — direct-draw (no sprite, works on all panels)
+static void _logo_draw_direct(int16_t cx, int16_t cy) {
+    TFT_eSPI *t = display_get_tft();
+    t->drawCircle(cx, cy, 16, colour_blend(C_BG, C_ACCENT, 40));
+    t->drawCircle(cx, cy, 15, colour_blend(C_BG, C_ACCENT, 75));
+    t->fillRect(cx - 10, cy - 7, 20, 14, C_PANEL);
+    t->drawRect(cx - 10, cy - 7, 20, 14, C_ACCENT);
+    t->fillRect(cx - 5, cy - 3, 10, 6, colour_blend(C_BG, C_PANEL, 180));
+    t->drawFastHLine(cx - 3, cy,     6, C_ACCENT);
+    t->drawFastVLine(cx,     cy - 2, 5, C_ACCENT);
+    t->drawPixel(cx, cy, C_ACCENT2);
+    for (int8_t d = -4; d <= 4; d += 4) {
+        t->drawFastHLine(cx - 13, cy + d, 3, C_ACCENT);
+        t->drawFastHLine(cx + 10, cy + d, 3, C_ACCENT);
+    }
+    t->drawFastVLine(cx - 4, cy - 10, 3, C_ACCENT);
+    t->drawFastVLine(cx + 4, cy - 10, 3, C_ACCENT);
+    t->drawFastVLine(cx - 4, cy +  7, 3, C_ACCENT);
+    t->drawFastVLine(cx + 4, cy +  7, 3, C_ACCENT);
+    const int16_t  vx[4] = { (int16_t)(cx-18), (int16_t)(cx+18), (int16_t)(cx-18), (int16_t)(cx+18) };
+    const int16_t  vy[4] = { (int16_t)(cy-12), (int16_t)(cy-12), (int16_t)(cy+12), (int16_t)(cy+12) };
+    const int16_t  px[4] = { (int16_t)(cx-10), (int16_t)(cx+10), (int16_t)(cx-10), (int16_t)(cx+10) };
+    const int16_t  py[4] = { (int16_t)(cy- 7), (int16_t)(cy- 7), (int16_t)(cy+ 7), (int16_t)(cy+ 7) };
+    const uint16_t vc[4] = { C_ACCENT2, C_ACCENT2, C_DKGREY, C_DKGREY };
+    for (uint8_t i = 0; i < 4; i++) {
+        t->drawLine(px[i], py[i], vx[i], vy[i], colour_blend(C_BG, C_DKGREY, 180));
+        t->fillCircle(vx[i], vy[i], 2, C_BG);
+        t->drawCircle(vx[i], vy[i], 2, vc[i]);
+    }
+}
+
+// Procedural IC / chip logo drawn into a sprite
+static void _logo_draw(TFT_eSprite &spr, int16_t cx, int16_t cy) {
+    // Subtle outer glow rings
+    spr.drawCircle(cx, cy, 16, colour_blend(C_BG, C_ACCENT, 40));
+    spr.drawCircle(cx, cy, 15, colour_blend(C_BG, C_ACCENT, 75));
+    // Chip body
+    spr.fillRect(cx - 10, cy - 7, 20, 14, C_PANEL);
+    spr.drawRect(cx - 10, cy - 7, 20, 14, C_ACCENT);
+    // Inner die
+    spr.fillRect(cx - 5, cy - 3, 10, 6, colour_blend(C_BG, C_PANEL, 180));
+    // Center crosshair
+    spr.drawFastHLine(cx - 3, cy,     6, C_ACCENT);
+    spr.drawFastVLine(cx,     cy - 2, 5, C_ACCENT);
+    spr.drawPixel(cx, cy, C_ACCENT2);
+    // Pins — 3 on each long side
+    for (int8_t d = -4; d <= 4; d += 4) {
+        spr.drawFastHLine(cx - 13, cy + d, 3, C_ACCENT);
+        spr.drawFastHLine(cx + 10, cy + d, 3, C_ACCENT);
+    }
+    // Pins — 2 on each short side
+    spr.drawFastVLine(cx - 4, cy - 10, 3, C_ACCENT);
+    spr.drawFastVLine(cx + 4, cy - 10, 3, C_ACCENT);
+    spr.drawFastVLine(cx - 4, cy +  7, 3, C_ACCENT);
+    spr.drawFastVLine(cx + 4, cy +  7, 3, C_ACCENT);
+    // Corner vias + diagonal traces
+    const int16_t  vx[4] = { (int16_t)(cx-18), (int16_t)(cx+18), (int16_t)(cx-18), (int16_t)(cx+18) };
+    const int16_t  vy[4] = { (int16_t)(cy-12), (int16_t)(cy-12), (int16_t)(cy+12), (int16_t)(cy+12) };
+    const int16_t  px[4] = { (int16_t)(cx-10), (int16_t)(cx+10), (int16_t)(cx-10), (int16_t)(cx+10) };
+    const int16_t  py[4] = { (int16_t)(cy- 7), (int16_t)(cy- 7), (int16_t)(cy+ 7), (int16_t)(cy+ 7) };
+    const uint16_t vc[4] = { C_ACCENT2, C_ACCENT2, C_DKGREY, C_DKGREY };
+    for (uint8_t i = 0; i < 4; i++) {
+        spr.drawLine(px[i], py[i], vx[i], vy[i], colour_blend(C_BG, C_DKGREY, 180));
+        spr.fillCircle(vx[i], vy[i], 2, C_BG);
+        spr.drawCircle(vx[i], vy[i], 2, vc[i]);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Boot helpers
@@ -108,7 +233,7 @@ static bool _boot_step(uint8_t row, const char *label, bool (*fn)()) {
     char buf[22];
     for (int t = 0; t < 4; t++) {
         snprintf(buf, sizeof(buf), "%-14s %c", label, spinner[t]);
-        display_row(row, buf, C_GREY, C_BLACK);
+        display_row(row, buf, C_GREY, C_BG);
         delay(55);
     }
     bool ok = fn ? fn() : true;
@@ -128,42 +253,78 @@ static bool _w_buttons() { buttons_init();      return true; }
 // ---------------------------------------------------------------------------
 void ui_boot(bool imu_ok) {
     _imu_ok = imu_ok;
+    _splash_stars_reset();
 
-    // ── Scanline wipe in ────────────────────────────────────────────────────
-    display_clear();
-    for (int16_t y = 0; y < DISP_H; y += 2) {
-        display_hline(0, y, DISP_W, C_ACCENT);
-        delay(6);
+    // ── Animated splash — direct-draw (no sprite push, avoids GRAM offset issues)
+    {
+        const char    *title    = "ROBOT CTRL";
+        const uint8_t  tlen     = (uint8_t)strlen(title);
+        const char    *sub      = "ESP32 Robotics v1";
+        const char    *sub2     = "by Avery Izatt";
+        const int16_t  logo_cx  = DISP_W / 2;
+        const int16_t  logo_cy  = 20;
+        const int16_t  title_y  = 43;
+        const int16_t  sub_y    = 55;
+        const int16_t  sub2_y   = 64;
+        uint8_t        chars_shown = 0;
+        bool           logo_drawn  = false;
+        bool           subs_drawn  = false;
+
+        // Initial background
+        display_fill(C_BG);
+        for (int16_t y = 0; y < DISP_H; y += 4)
+            display_hline(0, y, DISP_W, colour_blend(C_BG, C_BLACK, 45));
+        display_fill_rect(0, 0,          DISP_W, 3, C_ACCENT);
+        display_fill_rect(0, DISP_H - 3, DISP_W, 3, C_ACCENT);
+        display_hline(0, 3,          DISP_W, colour_blend(C_ACCENT, C_BG, 140));
+        display_hline(0, DISP_H - 4, DISP_W, colour_blend(C_ACCENT, C_BG, 140));
+
+        unsigned long frame_ms = millis();
+        for (uint8_t frame = 0; frame < 120; frame++) {
+            _stars_tick_direct();
+
+            // Logo appears at frame 15
+            if (frame == 15) {
+                _logo_draw_direct(logo_cx, logo_cy);
+                logo_drawn = true;
+            }
+
+            // Typewriter — one char every 80 ms, starts at frame 30
+            if (frame >= 30 && chars_shown < tlen) {
+                char tmp[12];
+                memcpy(tmp, title, chars_shown + 1);
+                tmp[chars_shown + 1] = '\0';
+                // Erase title area then redraw up to new char count
+                display_fill_rect(0, title_y, DISP_W, 10, C_BG);
+                chars_shown++;
+                int16_t tx = (DISP_W - (int16_t)chars_shown * 6) / 2;
+                display_text(tx, title_y, tmp, C_ACCENT, C_BG, 1);
+
+                if (chars_shown == tlen) {
+                    int16_t ul_w = tlen * 6;
+                    int16_t ul_x = (DISP_W - ul_w) / 2;
+                    display_hline(ul_x,     title_y + 10, ul_w,     C_ACCENT);
+                    display_hline(ul_x + 2, title_y + 11, ul_w - 4, colour_blend(C_ACCENT, C_BG, 160));
+                }
+            }
+
+            // Subtitles once title complete
+            if (chars_shown == tlen && !subs_drawn) {
+                subs_drawn = true;
+                display_text((DISP_W - (int16_t)strlen(sub)  * 6) / 2, sub_y,  sub,  C_DKGREY, C_BG, 1);
+                display_text((DISP_W - (int16_t)strlen(sub2) * 6) / 2, sub2_y, sub2, colour_blend(C_ACCENT, C_BG, 100), C_BG, 1);
+            }
+
+            // Re-draw accent bars after stars may have overwritten them
+            display_fill_rect(0, 0,          DISP_W, 3, C_ACCENT);
+            display_fill_rect(0, DISP_H - 3, DISP_W, 3, C_ACCENT);
+
+            // Pace to ~25 fps
+            unsigned long now = millis();
+            if (now - frame_ms < 40) delay(40 - (now - frame_ms));
+            frame_ms = millis();
+        }
     }
-    for (int16_t y = 0; y < DISP_H; y += 2) {
-        display_hline(0, y, DISP_W, C_BLACK);
-        delay(4);
-    }
-
-    // ── Typewriter splash ───────────────────────────────────────────────────
-    const char *title = "ROBOT CTRL";
-    const uint8_t tlen = (uint8_t)strlen(title);
-    int16_t ty = (DISP_H / 2) - 12;
-
-    for (uint8_t i = 0; i <= tlen; i++) {
-        char tmp[12]; memcpy(tmp, title, i); tmp[i] = '\0';
-        display_fill_rect(0, ty, DISP_W, 16, C_BLACK);
-        int16_t cx = (DISP_W - (int16_t)i * 12) / 2;
-        display_text(cx, ty, tmp, C_ACCENT, C_BLACK, 2);
-        delay(60);
-    }
-    // Accent underline beneath title
-    int16_t ul_x = (DISP_W - tlen * 12) / 2;
-    display_hline(ul_x, ty + 17, tlen * 12, C_ACCENT);
-    display_hline(ul_x, ty + 18, tlen * 12, C_DKGREY);
-
-    const char *sub  = "ESP32 Robotics Controller v1";
-    const char *sub2 = "by Avery Izatt";
-    int16_t sx  = (DISP_W - (int16_t)strlen(sub)  * 6) / 2;
-    int16_t sx2 = (DISP_W - (int16_t)strlen(sub2) * 6) / 2;
-    display_text(sx,  ty + 20, sub,  C_GREY,   C_BLACK, 1);
-    display_text(sx2, ty + 29, sub2, C_ACCENT2, C_BLACK, 1);
-    delay(900);
 
     // ── Self-test ────────────────────────────────────────────────────────────
     led_yellow();
@@ -177,12 +338,12 @@ void ui_boot(bool imu_ok) {
     _boot_step(r++, "Hall",       _w_hall);
     _boot_step(r++, "Buttons",    _w_buttons);
 
-    display_row(r, "IMU probe...  ", C_GREY, C_BLACK);
+    display_row(r, "IMU probe...  ", C_GREY, C_BG);
     delay(300);
     display_check(r++, "IMU", _imu_ok);
     Serial.printf("[boot] IMU %s\n", _imu_ok ? "OK" : "NOT FOUND");
     if (!_imu_ok) {
-        display_row(r, "Addr 0x68/0x69?", C_YELLOW, C_BLACK);
+        display_row(r, "Addr 0x68/0x69?", C_YELLOW, C_BG);
         delay(700);
     }
 
@@ -192,15 +353,26 @@ void ui_boot(bool imu_ok) {
     delay(250);
 
     // ── Ready banner ─────────────────────────────────────────────────────────
-    display_clear();
-    const char *ready = "READY";
-    int16_t rx = (DISP_W - (int16_t)strlen(ready) * 12) / 2;
-    int16_t ry = (DISP_H / 2) - 8;
-    display_fill_rect(0, ry - 4, DISP_W, 24, C_PANEL);
-    display_hline(0, ry - 4, DISP_W, C_ACCENT);
-    display_hline(0, ry + 20, DISP_W, C_ACCENT);
-    display_text(rx, ry, ready, C_GREEN, C_PANEL, 2);
-    delay(750);
+    display_fill(C_BG);
+    display_fill_rect(0, 0,          DISP_W, 3, C_ACCENT);
+    display_fill_rect(0, DISP_H - 3, DISP_W, 3, C_ACCENT);
+    {
+        const char *ready = "READY";
+        int16_t rx = (DISP_W - (int16_t)strlen(ready) * 12) / 2;
+        int16_t ry = (DISP_H / 2) - 8;
+        // Stars continue behind the ready card
+        for (uint8_t f = 0; f < 15; f++) {
+            _stars_tick_direct();
+            display_fill_rect(0, 0,          DISP_W, 3, C_ACCENT);
+            display_fill_rect(0, DISP_H - 3, DISP_W, 3, C_ACCENT);
+            delay(30);
+        }
+        display_fill_rect(0, ry - 5, DISP_W, 26, C_PANEL);
+        display_hline(0, ry - 5,  DISP_W, C_ACCENT);
+        display_hline(0, ry + 20, DISP_W, C_ACCENT);
+        display_text(rx, ry, ready, C_ACCENT, C_PANEL, 2);
+        delay(700);
+    }
 
     display_clear_bg();
     _needs_redraw  = true;
@@ -220,21 +392,48 @@ static constexpr int16_t MENU_START_Y = HDR_BOT + 2;
 static constexpr uint8_t MENU_PAGE    = 5;     // visible items at once
 static uint8_t _menu_scroll = 0;
 
+// Unique accent colour per menu entry for quick visual identification
+static constexpr uint16_t MENU_ACCENTS[] = {
+    0x07FF,   // Sensors    — cyan
+    0x847F,   // IMU Data   — violet
+    C_MAGENTA,// Tilt Demo  — magenta
+    C_GREEN,  // Motors     — green
+    C_YELLOW, // Ultrasonic — yellow
+    C_ORANGE, // Hall Demo  — orange
+    C_ACCENT2,// Servo Demo — amber
+    C_LTGREY, // System     — silver
+    C_ACCENT, // Games      — steel blue
+};
+
 static void _draw_menu_item(uint8_t idx, bool selected) {
     int16_t vis = (int16_t)idx - (int16_t)_menu_scroll;
     if (vis < 0 || vis >= MENU_PAGE) return;
     int16_t y = MENU_START_Y + vis * MENU_ITEM_H;
     const MenuItem &item = MENU_ITEMS[idx];
-    int16_t w = DISP_W - 4;  // leave space for scrollbar
+    constexpr int16_t w = DISP_W - 4;
+    uint16_t acc = MENU_ACCENTS[idx];
 
     if (selected) {
-        display_fill_rect(0, y, w, MENU_ITEM_H, C_PANEL);
-        display_fill_rect(0, y, 2, MENU_ITEM_H, C_ACCENT);    // left accent bar
-        display_text(6, y + 2, item.label, C_WHITE, C_PANEL, 1);
+        // Filled card background
+        display_fill_rect(0, y, w, MENU_ITEM_H - 1, C_PANEL);
+        // 3-px coloured left bar
+        display_fill_rect(0, y, 3, MENU_ITEM_H - 1, acc);
+        // Icon in a small contrasting box
+        display_fill_rect(4, y, 10, MENU_ITEM_H - 1, C_BG);
+        display_text(5, y + 1, item.icon, acc, C_BG, 1);
+        // Label
+        display_text(16, y + 1, item.label, C_WHITE, C_PANEL, 1);
+        // Arrow indicator on right
+        display_text(w - 7, y + 1, ">", acc, C_PANEL, 1);
     } else {
-        display_fill_rect(0, y, w, MENU_ITEM_H, C_BG);
-        display_text(6, y + 2, item.label, C_GREY,  C_BG, 1);
+        display_fill_rect(0, y, w, MENU_ITEM_H - 1, C_BG);
+        // 1-px dim left edge
+        display_fill_rect(0, y, 1, MENU_ITEM_H - 1, C_DKGREY);
+        display_text(5, y + 1, item.icon, C_DKGREY, C_BG, 1);
+        display_text(16, y + 1, item.label, C_GREY, C_BG, 1);
     }
+    // Subtle separator between items
+    display_hline(1, y + MENU_ITEM_H - 1, w - 1, C_BG);
 }
 
 // Thin scrollbar on the right edge — tracks pot / selection position
@@ -257,7 +456,7 @@ static void _draw_scrollbar() {
 
 static void _draw_menu() {
     display_clear_bg();
-    display_header("MENU", HDR_H);
+    display_header("ROBOT CTRL", HDR_H);
 
     for (uint8_t i = _menu_scroll;
          i < _menu_scroll + MENU_PAGE && i < MENU_LEN; i++) {
@@ -266,8 +465,7 @@ static void _draw_menu() {
 
     _draw_scrollbar();
 
-    char cnt[6]; snprintf(cnt, sizeof(cnt), "%d/%d", _menu_idx + 1, MENU_LEN);
-    display_footer(cnt, "SELECT");
+    display_footer(MENU_ITEMS[_menu_idx].label, "SELECT");
     Serial.printf("[menu] %d/%d  %s\n", _menu_idx + 1, MENU_LEN,
                   MENU_ITEMS[_menu_idx].label);
 }
@@ -294,8 +492,7 @@ static void _handle_menu() {
             _draw_menu_item(old_idx,   false);
             _draw_menu_item(_menu_idx, true);
             _draw_scrollbar();
-            char cnt[6]; snprintf(cnt, sizeof(cnt), "%d/%d", _menu_idx + 1, MENU_LEN);
-            display_footer(cnt, "SELECT");
+            display_footer(MENU_ITEMS[_menu_idx].label, "SELECT");
         }
         return;
     }
@@ -320,10 +517,12 @@ static void _handle_menu() {
 }
 
 // ---------------------------------------------------------------------------
-// Back helper — BTN_SELECT returns to menu from any sub-screen
+// Back helper — hold BTN_SELECT ≥ 800 ms returns to menu from any sub-screen
 // ---------------------------------------------------------------------------
 static bool _check_back() {
-    if (button_just_pressed(BTN_SELECT)) {
+    static bool _armed = false;
+    if (button_is_pressed(BTN_SELECT) && button_held_ms(BTN_SELECT) >= 800UL && !_armed) {
+        _armed = true;
         _mark_active();
         _state        = UiState::MENU;
         _needs_redraw = true;
@@ -331,6 +530,7 @@ static bool _check_back() {
         Serial.println("[ui] back → menu");
         return true;
     }
+    if (!button_is_pressed(BTN_SELECT)) _armed = false;
     if (button_just_pressed(BTN_CYCLE)) _mark_active();
     return false;
 }
@@ -345,7 +545,7 @@ static void _screen_sensors() {
     if (!_hdr) {
         display_clear_bg();
         display_header("SENSORS", HDR_H);
-        display_footer("NEXT", "BACK");
+        display_footer("NEXT", "HOLD");
         _hdr = true;
     }
 
@@ -362,8 +562,14 @@ static void _screen_sensors() {
     for (int i = 0; i < 4; i++) {
         int16_t row_y = HDR_BOT + 2 + i * 12;
         char val[10];
-        // Key label
-        display_text(3, row_y, labels[i], C_GREY, C_BG, 1);
+        // Compute bar colour first so label can share it
+        float frac_pre = (d[i] >= 0.0f) ? (d[i] / US_MAX) : 0.0f;
+        if (frac_pre > 1.0f) frac_pre = 1.0f;
+        uint16_t label_c = (frac_pre < 0.33f) ? C_RED
+                         : (frac_pre < 0.66f) ? C_YELLOW : C_GREEN;
+        if (d[i] < 0.0f) label_c = C_DKGREY;
+        // Key label — colour matches bar
+        display_text(3, row_y, labels[i], label_c, C_BG, 1);
         // Value text
         if (d[i] >= 0.0f) {
             snprintf(val, sizeof(val), "%5.0fcm", d[i]);
@@ -372,17 +578,17 @@ static void _screen_sensors() {
         }
         display_text(BAR_X - 42, row_y, val, C_WHITE, C_BG, 1);
         // Colour bar: close=red, mid=yellow, far=green
-        float frac = (d[i] >= 0.0f) ? (d[i] / US_MAX) : 0.0f;
-        if (frac > 1.0f) frac = 1.0f;
-        uint16_t bar_c;
-        if      (frac < 0.33f) bar_c = C_RED;
-        else if (frac < 0.66f) bar_c = C_YELLOW;
-        else                   bar_c = C_GREEN;
+        float frac = frac_pre;
+        uint16_t bar_c = label_c;
         int16_t fill = (int16_t)(frac * BAR_W);
         display_fill_rect(BAR_X, row_y,        BAR_W, 8, C_PANEL);
         display_rect     (BAR_X, row_y,        BAR_W, 8, C_DKGREY);
-        if (fill > 0)
-            display_fill_rect(BAR_X + 1, row_y + 1, fill, 6, bar_c);
+        if (fill > 0) {
+            display_fill_rect(BAR_X + 1, row_y + 1, fill,     6, bar_c);
+            // Top highlight shimmer line
+            display_hline(BAR_X + 1, row_y + 1, fill,
+                          colour_blend(bar_c, C_WHITE, 80));
+        }
     }
 
     // -- Hall sensors ---------------------------------------------------------
@@ -409,7 +615,7 @@ static void _screen_imu() {
     if (!_hdr) {
         display_clear_bg();
         display_header("IMU DATA", HDR_H);
-        display_footer("DEMO", "BACK");
+        display_footer("DEMO", "HOLD");
         if (!_imu_ok) {
             display_text_centred(0, DISP_H/2 - 8, DISP_W, "Not detected",   C_RED,    C_BG, 1);
             display_text_centred(0, DISP_H/2 + 2, DISP_W, "0x68 / 0x69?",  C_YELLOW, C_BG, 1);
@@ -500,13 +706,17 @@ static void _screen_imu() {
 }
 
 // ---------------------------------------------------------------------------
-// Screen: IMU Tilt Demo — liquid simulation
+// Screen: IMU Tilt Demo — liquid level simulation
 //
-// Physics model:
-//   A "blob" with velocity responds to accelerometer tilt.
-//   We draw the blob as a filled circle, erase old position, draw new one.
-//   Additionally a "liquid surface" is simulated as a sine wave whose
-//   horizontal tilt tracks accel_y.
+// The arena is half-filled with blue liquid.  When the board tilts the
+// surface tilts accordingly (using accel_x / accel_y).  A small air-bubble
+// trapped inside the liquid always floats toward the top of the liquid,
+// so it moves opposite to gravity — just like a spirit level.
+//
+// Rendering strategy (sprite-less):
+//   • Every frame we repaint the entire arena — background, liquid body,
+//     surface wave, bubble, and border.  The arena is small (≈156×54 px)
+//     so a column-by-column fill is fast enough at 33 fps with TFT_eSPI DMA.
 // ---------------------------------------------------------------------------
 
 static constexpr int16_t ARENA_X1 = 2;
@@ -516,206 +726,262 @@ static constexpr int16_t ARENA_Y2 = FOOT_Y - 2;
 static constexpr int16_t ARENA_W  = ARENA_X2 - ARENA_X1;
 static constexpr int16_t ARENA_H  = ARENA_Y2 - ARENA_Y1;
 
+// Liquid colours
+static constexpr uint16_t C_LIQUID_DEEP   = 0x0319;  // deep navy  #041832
+static constexpr uint16_t C_LIQUID_MID    = 0x04BA;  // mid blue   #0924D0 → 0x044E better
+static constexpr uint16_t C_LIQUID_SURF   = 0x07FF;  // cyan surf line
+static constexpr uint16_t C_BUBBLE        = 0xC7FF;  // light blue-white bubble
+static constexpr uint16_t C_BUBBLE_HILIT  = 0xEFFF;  // near-white highlight
+
+// EMA smoothing weights
+static constexpr float TILT_ALPHA   = 0.20f;  // surface tilt  (higher = more responsive)
+static constexpr float BUBBLE_ALPHA = 0.25f;  // bubble pos    (slightly faster than surface)
+
 struct LiquidState {
-    float blob_x, blob_y;
-    float vel_x,  vel_y;
-    // Liquid surface: tilt angle in radians (target + smoothed)
-    float surface_tilt;
-    float surface_tilt_target;
-    // Wave phase
+    float tilt;             // smoothed left/right tilt from accel_y  (-1..+1)
+    float tilt_prev;        // previous frame tilt — for slosh velocity
+    float slosh_vel;        // extra wave amplitude from rapid tilt changes
     float wave_phase;
+    // Bubble position in arena coords
+    float bub_x, bub_y;
     bool  init;
 };
 
 static LiquidState _liq = {};
 
 static void _liquid_init() {
-    _liq.blob_x = ARENA_X1 + ARENA_W / 2.0f;
-    _liq.blob_y = ARENA_Y1 + ARENA_H / 2.0f;
-    _liq.vel_x  = 0.0f;
-    _liq.vel_y  = 0.0f;
-    _liq.surface_tilt  = 0.0f;
-    _liq.surface_tilt_target = 0.0f;
-    _liq.wave_phase = 0.0f;
-    _liq.init = true;
+    _liq.tilt      = 0;
+    _liq.tilt_prev = 0;
+    _liq.slosh_vel = 0;
+    _liq.wave_phase = 0;
+    _liq.bub_x = ARENA_X1 + ARENA_W * 0.5f;
+    _liq.bub_y = ARENA_Y1 + ARENA_H * 0.35f;
+    _liq.init  = true;
 }
 
-// Draw / erase the liquid surface as a tilted sine wave.
-// pass erase=true to overdraw with bg colour before moving.
-static void _draw_surface(float tilt, float phase, bool erase) {
-    constexpr int16_t SRF_HALF = ARENA_H / 3;   // surface sits ≈ 1/3 from bottom
-    int16_t base_y = ARENA_Y1 + (ARENA_H * 2) / 3;
-
-    for (int16_t sx = 0; sx < ARENA_W; sx++) {
-        float fx    = (float)sx / (float)ARENA_W;
-        // Tilt contribution: left edge up when tilting right
-        float tilt_off = tilt * SRF_HALF * (fx - 0.5f) * 2.0f;
-        // Sine ripple
-        float ripple   = sinf(fx * 6.2832f + phase) * 2.0f;
-        int16_t sy = (int16_t)(base_y + tilt_off + ripple);
-        if (sy < ARENA_Y1) sy = ARENA_Y1;
-        if (sy > ARENA_Y2) sy = ARENA_Y2;
-
-        uint16_t fill_c = erase ? C_BG : C_NAVY;
-        uint16_t surf_c = erase ? C_BG : C_ACCENT;
-
-        // Fill below surface with dark water
-        display_vline(ARENA_X1 + sx, sy + 1, ARENA_Y2 - sy, fill_c);
-        // Surface line
-        display_pixel(ARENA_X1 + sx, sy, surf_c);
-    }
+// Returns the liquid surface Y at a given screen X.
+// tilt: -1.0 = full left, +1.0 = full right  (from accel_y)
+// slosh: extra wave amplitude from rapid tilt changes
+static inline int16_t _surface_y(int16_t sx, float tilt, float wave_phase,
+                                  float slosh = 0.0f,
+                                  float fill_level = 0.52f) {
+    float fx       = (float)(sx - ARENA_X1) / (float)ARENA_W;  // 0..1
+    float center_y = ARENA_Y1 + ARENA_H * (1.0f - fill_level);
+    // Tilt: positive tilt (right side down) → right side has more liquid
+    // left (fx=0) surface goes DOWN (+offset), right (fx=1) goes UP (-offset)
+    float tilt_off = tilt * (ARENA_H * 0.46f) * (0.5f - fx) * 2.0f;
+    // Base ripple + slosh contribution (slosh adds amplitude when tilt changes fast)
+    float wave_amp = 1.8f + fabsf(slosh) * 12.0f;
+    float ripple   = sinf(fx * 7.85f + wave_phase)          * wave_amp
+                   + sinf(fx * 3.14f - wave_phase * 0.7f)   * (wave_amp * 0.55f)
+                   + sinf(fx * 12.0f + wave_phase * 1.4f)   * (fabsf(slosh) * 4.0f);
+    int16_t sy = (int16_t)(center_y + tilt_off + ripple);
+    if (sy < ARENA_Y1 + 2) sy = ARENA_Y1 + 2;
+    if (sy > ARENA_Y2 - 2) sy = ARENA_Y2 - 2;
+    return sy;
 }
 
 static void _screen_imu_demo() {
     static unsigned long _last_frame = 0;
     static bool          _hdr        = false;
-    static int16_t       _old_bx, _old_by;
-    static constexpr int16_t BLOB_R = 5;
-    static constexpr float   GRAVITY = 0.35f;
-    static constexpr float   DAMPING = 0.88f;
 
     if (!_hdr) {
         display_clear_bg();
         display_header("TILT DEMO", HDR_H);
-        display_footer("IMU", "BACK");
-        // Draw arena border
-        display_rect(ARENA_X1 - 1, ARENA_Y1 - 1,
-                     ARENA_W + 2, ARENA_H + 2, C_DKGREY);
+        display_footer("IMU", "HOLD");
         _liquid_init();
-        _old_bx = (int16_t)_liq.blob_x;
-        _old_by = (int16_t)_liq.blob_y;
         _hdr = true;
     }
 
-    // Cycle → jump back to IMU Data screen
     if (button_just_pressed(BTN_CYCLE)) {
         _mark_active();
-        _state        = UiState::SCREEN_IMU;
-        _needs_redraw = true;
-        display_clear_bg();
-        _hdr = false;
-        return;
+        _state = UiState::SCREEN_IMU; _needs_redraw = true;
+        display_clear_bg(); _hdr = false; return;
     }
-    if (button_just_pressed(BTN_SELECT)) {
-        _mark_active();
-        _state        = UiState::MENU;
-        _needs_redraw = true;
-        display_clear_bg();
-        _hdr = false;
-        Serial.println("[ui] back to menu");
-        return;
+    {
+        static bool _tilt_back_armed = false;
+        if (button_is_pressed(BTN_SELECT) && button_held_ms(BTN_SELECT) >= 800UL && !_tilt_back_armed) {
+            _tilt_back_armed = true;
+            _mark_active();
+            _state = UiState::MENU; _needs_redraw = true;
+            display_clear_bg(); _hdr = false;
+            Serial.println("[ui] back to menu"); return;
+        }
+        if (!button_is_pressed(BTN_SELECT)) _tilt_back_armed = false;
     }
 
     constexpr unsigned long FRAME_MS = 30;
     if (millis() - _last_frame < FRAME_MS) return;
     _last_frame = millis();
 
-    // Read IMU (fall back to zero motion if unavailable)
-    float ax = 0.0f, ay = 0.0f;
+    // ── IMU read  (accel_y = left/right tilt: left=-1g, right=+1g) ───────
+    float ay = 0.0f;
     if (_imu_ok) {
         ImuData d;
         if (imu_read(d)) {
-            ax = d.accel_x / 9.81f;   // normalise to g: -1..+1 roughly
             ay = d.accel_y / 9.81f;
+            if (ay >  1.0f) ay =  1.0f;
+            if (ay < -1.0f) ay = -1.0f;
         }
     }
 
-    // ── Physics ────────────────────────────────────────────────────────────
-    _liq.vel_x  = (_liq.vel_x  + ax * GRAVITY) * DAMPING;
-    _liq.vel_y  = (_liq.vel_y  + ay * GRAVITY) * DAMPING;
-    _liq.blob_x += _liq.vel_x;
-    _liq.blob_y += _liq.vel_y;
+    // ── Smooth tilt + compute slosh velocity ─────────────────────────────
+    _liq.tilt_prev = _liq.tilt;
+    _liq.tilt      = _liq.tilt * (1.0f - TILT_ALPHA) + ay * TILT_ALPHA;
+    float tilt_delta = _liq.tilt - _liq.tilt_prev;
+    // Slosh decays each frame, is boosted by tilt velocity
+    _liq.slosh_vel = _liq.slosh_vel * 0.82f + tilt_delta * 4.5f;
+    _liq.wave_phase += 0.10f + fabsf(_liq.slosh_vel) * 0.06f;
 
-    // Wall bounce
-    if (_liq.blob_x < ARENA_X1 + BLOB_R) {
-        _liq.blob_x = ARENA_X1 + BLOB_R; _liq.vel_x = -_liq.vel_x * 0.6f;
+    // ── Bubble target: spirit-level — floats to the high (uphill) side ───
+    // When tilt > 0 (right side down), high side is LEFT → bubble drifts left
+    float bub_target_x = ARENA_X1 + ARENA_W * (0.5f - _liq.tilt * 0.45f);
+    // Clamp bubble inside arena
+    if (bub_target_x < ARENA_X1 + 6)  bub_target_x = ARENA_X1 + 6.0f;
+    if (bub_target_x > ARENA_X2 - 6)  bub_target_x = ARENA_X2 - 6.0f;
+    // Find surface Y at bubble's horizontal position
+    int16_t surf_at_bub = _surface_y((int16_t)bub_target_x,
+                                      _liq.tilt, _liq.wave_phase, _liq.slosh_vel);
+    float bub_target_y  = (float)surf_at_bub + 5.0f;  // just below surface
+
+    _liq.bub_x = _liq.bub_x * (1.0f - BUBBLE_ALPHA) + bub_target_x * BUBBLE_ALPHA;
+    _liq.bub_y = _liq.bub_y * (1.0f - BUBBLE_ALPHA) + bub_target_y * BUBBLE_ALPHA;
+
+    // ── Render: column-by-column ──────────────────────────────────────────
+    for (int16_t sx = ARENA_X1; sx < ARENA_X2; sx++) {
+        int16_t sy = _surface_y(sx, _liq.tilt, _liq.wave_phase, _liq.slosh_vel);
+
+        // Air above surface
+        display_vline(sx, ARENA_Y1, sy - ARENA_Y1, C_BG);
+
+        // Surface pixel — cyan highlight
+        display_pixel(sx, sy, C_LIQUID_SURF);
+
+        // Liquid body — gradient: lighter near surface, deeper toward bottom
+        int16_t liq_h = ARENA_Y2 - sy - 1;
+        if (liq_h > 0) {
+            // Top quarter of liquid body: mid blue
+            int16_t mid_h = liq_h / 3;
+            if (mid_h > 0)
+                display_vline(sx, sy + 1, mid_h, C_LIQUID_MID);
+            // Remainder: deep navy
+            if (liq_h - mid_h > 0)
+                display_vline(sx, sy + 1 + mid_h, liq_h - mid_h, C_LIQUID_DEEP);
+        }
     }
-    if (_liq.blob_x > ARENA_X2 - BLOB_R) {
-        _liq.blob_x = ARENA_X2 - BLOB_R; _liq.vel_x = -_liq.vel_x * 0.6f;
+
+    // ── Bubble (drawn on top of liquid) ───────────────────────────────────
+    int16_t bxi = (int16_t)_liq.bub_x;
+    int16_t byi = (int16_t)_liq.bub_y;
+    constexpr int16_t BUB_R = 4;
+    int16_t surf_at_bxi = _surface_y(bxi, _liq.tilt, _liq.wave_phase, _liq.slosh_vel);
+    if (byi > surf_at_bxi && byi < ARENA_Y2 - BUB_R) {
+        display_circle(bxi, byi, BUB_R, C_BUBBLE);
+        display_circle(bxi, byi, BUB_R - 1,
+                       colour_blend(C_LIQUID_MID, C_BUBBLE, 130));
+        display_pixel(bxi - 1, byi - 2, C_BUBBLE_HILIT);
+        display_pixel(bxi,     byi - 3, C_BUBBLE_HILIT);
     }
-    if (_liq.blob_y < ARENA_Y1 + BLOB_R) {
-        _liq.blob_y = ARENA_Y1 + BLOB_R; _liq.vel_y = -_liq.vel_y * 0.6f;
-    }
-    if (_liq.blob_y > ARENA_Y2 - BLOB_R) {
-        _liq.blob_y = ARENA_Y2 - BLOB_R; _liq.vel_y = -_liq.vel_y * 0.6f;
-    }
 
-    // Surface tilt tracking
-    _liq.surface_tilt_target = -ay * 1.2f;
-    _liq.surface_tilt = _liq.surface_tilt * 0.85f + _liq.surface_tilt_target * 0.15f;
-    _liq.wave_phase  += 0.12f;
+    // ── Arena border ──────────────────────────────────────────────────────
+    display_rect(ARENA_X1 - 1, ARENA_Y1 - 1, ARENA_W + 2, ARENA_H + 2, C_DKGREY);
 
-    // ── Render ─────────────────────────────────────────────────────────────
-    // 1. Erase old surface
-    _draw_surface(_liq.surface_tilt - 0.01f, _liq.wave_phase - 0.12f, true);
-
-    // 2. Erase old blob
-    int16_t bxi = (int16_t)_liq.blob_x;
-    int16_t byi = (int16_t)_liq.blob_y;
-    display_fill_circle(_old_bx, _old_by, BLOB_R + 1, C_BG);
-
-    // 3. Draw new surface
-    _draw_surface(_liq.surface_tilt, _liq.wave_phase, false);
-
-    // 4. Draw blob (on top of surface)
-    float speed = sqrtf(_liq.vel_x * _liq.vel_x + _liq.vel_y * _liq.vel_y);
-    uint16_t blob_c = (speed > 1.5f) ? C_ORANGE :
-                      (speed > 0.5f) ? C_ACCENT  : C_CYAN;
-    display_fill_circle(bxi, byi, BLOB_R, blob_c);
-    // Highlight dot
-    display_fill_circle(bxi - 1, byi - 1, 1, colour_blend(blob_c, C_WHITE, 160));
-
-    // 5. Re-draw arena border edges that got clipped
-    display_rect(ARENA_X1 - 1, ARENA_Y1 - 1,
-                 ARENA_W + 2, ARENA_H + 2, C_DKGREY);
-
-    _old_bx = bxi;
-    _old_by = byi;
+    // ── Tilt readout — shows accel_y value and a level-gauge bar ─────────
+    // Left label, right label, needle in centre
+    constexpr int16_t GY = FOOT_Y + 1;
+    constexpr int16_t GW = DISP_W - 24;
+    constexpr int16_t GX = 12;
+    display_fill_rect(0, GY, DISP_W, ROW_PX, C_BG);
+    display_text(2,         GY, "L", C_DKGREY, C_BG, 1);
+    display_text(DISP_W - 8, GY, "R", C_DKGREY, C_BG, 1);
+    // Track
+    display_fill_rect(GX, GY + 2, GW, 4, C_PANEL);
+    display_rect     (GX, GY + 2, GW, 4, C_DKGREY);
+    // Centre mark
+    display_vline(GX + GW / 2, GY + 1, 6, C_DKGREY);
+    // Needle — maps -1..+1 to left..right of track
+    int16_t needle_x = GX + (int16_t)(((_liq.tilt + 1.0f) * 0.5f) * (float)(GW - 4));
+    uint16_t nc = (fabsf(_liq.tilt) > 0.6f) ? C_ORANGE : C_ACCENT;
+    display_fill_rect(needle_x, GY + 1, 4, 6, nc);
+    // Numeric readout top-left corner of arena (small, non-intrusive)
+    char tbuf[12];
+    snprintf(tbuf, sizeof(tbuf), "Y:%+.2f", _liq.tilt);
+    display_text(ARENA_X1 + 1, ARENA_Y1 + 2, tbuf, C_LIQUID_SURF, C_LIQUID_DEEP, 1);
 }
 
 // ---------------------------------------------------------------------------
-// Screen: Motors
+// Screen: Motors — pot sets speed, BTN_CYCLE drives forward
 // ---------------------------------------------------------------------------
 static void _screen_motors() {
-    static bool _hdr = false;
+    static bool          _hdr      = false;
+    static unsigned long _last_draw = 0;
+    static bool          _was      = false;
 
     if (!_hdr) {
         display_clear_bg();
         display_header("MOTORS", HDR_H);
-
-        int16_t cy = HDR_BOT + 6;
-        display_text_centred(0, cy,      DISP_W, "Hold NEXT = forward", C_GREY, C_BG, 1);
-        display_text_centred(0, cy + 10, DISP_W, "Release  = coast",    C_DKGREY, C_BG, 1);
-        display_footer("FWD", "BACK");
+        display_text_centred(0, HDR_BOT + 4, DISP_W,
+                             "POT = speed  NEXT = drive", C_GREY, C_BG, 1);
+        display_footer("DRIVE", "HOLD");
         _hdr = true;
     }
 
-    bool driving      = button_is_pressed(BTN_CYCLE);
-    static bool _was  = false;
+    bool driving = button_is_pressed(BTN_CYCLE);
+    uint8_t spd  = (uint8_t)(pot_raw() >> 4);  // 0-4095 → 0-255
+    uint8_t pct  = (uint8_t)((uint16_t)spd * 100 / 255);
 
-    if (driving != _was) {
-        _was = driving;
-        int16_t sy = HDR_BOT + 32;
-        if (driving) {
-            motor_set(MotorId::MOTOR1,  180);
-            motor_set(MotorId::MOTOR2,  180);
-            display_fill_rect(1, sy, DISP_W - 2, 14, C_GREEN);
-            display_text_centred(0, sy + 3, DISP_W, ">>>  FWD  >>>", C_BLACK, C_GREEN, 1);
-            Serial.println("[motors] FWD");
-        } else {
+    if (driving) {
+        motor_set(MotorId::MOTOR1, spd);
+        motor_set(MotorId::MOTOR2, spd);
+    } else {
+        if (_was) {
             motor_coast(MotorId::MOTOR1);
             motor_coast(MotorId::MOTOR2);
-            display_fill_rect(1, sy, DISP_W - 2, 14, C_PANEL);
-            display_text_centred(0, sy + 3, DISP_W, "-- COAST --",  C_DKGREY, C_PANEL, 1);
             Serial.println("[motors] coast");
+        }
+    }
+    _was = driving;
+
+    // Redraw at ~15fps
+    if (millis() - _last_draw >= 66) {
+        _last_draw = millis();
+        constexpr int16_t BAR_Y = HDR_BOT + 16;
+        constexpr int16_t BAR_W = DISP_W - 20;
+        constexpr int16_t BAR_H = 14;
+
+        // Speed label + percent
+        char spdbuf[12]; snprintf(spdbuf, sizeof(spdbuf), "SPD: %3d%%", pct);
+        display_fill_rect(0, BAR_Y - 10, DISP_W, 9, C_BG);
+        display_text_centred(0, BAR_Y - 10, DISP_W, spdbuf,
+                             driving ? C_GREEN : C_GREY, C_BG, 1);
+
+        // Speed bar
+        uint16_t bar_col = driving
+            ? (pct > 70 ? C_ORANGE : C_GREEN)
+            : colour_blend(C_DKGREY, C_GREEN, pct);
+        int16_t fill = (int16_t)((uint16_t)pct * BAR_W / 100);
+        display_fill_rect(10, BAR_Y, BAR_W, BAR_H, C_PANEL);
+        display_rect     (10, BAR_Y, BAR_W, BAR_H, C_DKGREY);
+        if (fill > 0)
+            display_fill_rect(11, BAR_Y + 1, fill, BAR_H - 2, bar_col);
+
+        // Status banner
+        constexpr int16_t SY = BAR_Y + BAR_H + 6;
+        if (driving) {
+            display_fill_rect(1, SY, DISP_W - 2, 12, C_GREEN);
+            display_text_centred(0, SY + 2, DISP_W, ">>>  DRIVING  >>>",
+                                 C_BLACK, C_GREEN, 1);
+        } else {
+            display_fill_rect(1, SY, DISP_W - 2, 12, C_PANEL);
+            display_text_centred(0, SY + 2, DISP_W, "--  READY  --",
+                                 C_DKGREY, C_PANEL, 1);
         }
     }
 
     if (_check_back()) {
         motor_coast(MotorId::MOTOR1);
         motor_coast(MotorId::MOTOR2);
-        _hdr  = false;
-        _was  = false;
+        _hdr = false; _was = false;
     }
 }
 
@@ -728,35 +994,37 @@ static void _screen_system() {
 
     if (!_hdr) {
         display_clear_bg();
-        display_header("SYSTEM", HDR_H);
+        display_header("SYSTEM INFO", HDR_H);
 
-        int16_t y = HDR_BOT + 2;
-        char buf[20];
+        // 7 compact rows of 8px each: y=14..70, fits perfectly
+        int16_t y = HDR_BOT + 1;
+        char buf[22];
 
-        // Static rows
-        display_kv(y, "Board",  "ESP32-S3");   y += ROW_PX + 1;
-        display_kv(y, "FW",     "v1.0");        y += ROW_PX + 1;
-        snprintf(buf, sizeof(buf), "%uMHz", ESP.getCpuFreqMHz());
-        display_kv(y, "CPU",    buf);           y += ROW_PX + 1;
-        snprintf(buf, sizeof(buf), "%uKB", ESP.getFlashChipSize() / 1024);
-        display_kv(y, "Flash",  buf);           y += ROW_PX + 1;
-        display_kv(y, "IMU",    _imu_ok ? "yes" : "no",
-                   _imu_ok ? C_GREEN : C_RED);  y += ROW_PX + 1;
-        display_kv(y, "Disp",  "160x80 ST7735"); y += ROW_PX + 1;
+        display_kv(y, "Board",  "ESP32-S3",       C_CYAN);   y += ROW_PX;
+        display_kv(y, "FW",     "v1.0",            C_WHITE);  y += ROW_PX;
+        snprintf(buf, sizeof(buf), "%u MHz", ESP.getCpuFreqMHz());
+        display_kv(y, "CPU",    buf,               C_GREEN);  y += ROW_PX;
+        snprintf(buf, sizeof(buf), "%u KB", ESP.getFlashChipSize() / 1024);
+        display_kv(y, "Flash",  buf,               C_YELLOW); y += ROW_PX;
+        display_kv(y, "IMU",    _imu_ok ? "OK" : "none",
+                   _imu_ok ? C_GREEN : C_RED);                y += ROW_PX;
+        // Divider before author section
+        display_hline(8, y, DISP_W - 16, C_DKGREY);          y += 1;
+        display_kv(y, "Author", "averyizatt",     C_ACCENT);  y += ROW_PX;
+        display_kv(y, "Web",    "averyizatt.com", C_ACCENT2); y += ROW_PX;
 
-        display_footer("---", "BACK");
+        display_footer("...", "HOLD");
         _hdr = true;
     }
 
+    // Dynamic footer: live uptime + free heap
     if (millis() - _last >= 1000) {
         _last = millis();
-        int16_t y = HDR_BOT + 2 + 6 * (ROW_PX + 1);
-        char up[12], hp[12];
-        snprintf(up, sizeof(up), "%lus",  millis() / 1000UL);
-        snprintf(hp, sizeof(hp), "%uKB",  ESP.getFreeHeap() / 1024);
-        display_kv(y,             "Uptime", up); y += ROW_PX + 1;
-        display_kv(y,             "Heap",   hp);
-        Serial.printf("[sys] uptime=%s  heap=%s\n", up, hp);
+        char up[24];
+        snprintf(up, sizeof(up), "up %lus | %uKB",
+                 millis() / 1000UL, ESP.getFreeHeap() / 1024);
+        display_footer(up, "HOLD");
+        Serial.printf("[sys] %s\n", up);
     }
 
     if (_check_back()) _hdr = false;
@@ -775,7 +1043,7 @@ static void _demo_ultrasonic() {
     if (!_hdr) {
         display_clear_bg();
         display_header("ULTRASONIC", HDR_H);
-        display_footer("FOCUS", "BACK");
+        display_footer("FOCUS", "HOLD");
         _hdr = true;
     }
 
@@ -850,7 +1118,7 @@ static void _demo_hall() {
     if (!_hdr) {
         display_clear_bg();
         display_header("HALL SENSORS", HDR_H);
-        display_footer("RESET", "BACK");
+        display_footer("RESET", "HOLD");
         _hdr = true;
     }
 
@@ -928,47 +1196,30 @@ static void _demo_hall() {
 }
 
 // ---------------------------------------------------------------------------
-// Demo: Servo — sweeps servo1 back and forth, shows live angle
-//   BTN_CYCLE → nudge +15 deg (manual override)
+// Demo: Servo — pot controls servo1 position (0–180 deg)
+//   POT     → directly commands servo angle 0–180°
 //   BTN_SELECT → back  (servo left at last position)
 // ---------------------------------------------------------------------------
 static void _demo_servo() {
-    static unsigned long _last_sweep = 0;
     static unsigned long _last_draw  = 0;
     static bool          _hdr        = false;
     static int16_t       _angle      = 90;
-    static int8_t        _dir        = 1;  // +1 sweeping up, -1 sweeping down
-    static bool          _manual     = false;
 
     if (!_hdr) {
         display_clear_bg();
         display_header("SERVO DEMO", HDR_H);
-        display_footer("NUDGE", "BACK");
+        display_footer("POT=POS", "HOLD");
         _angle = 90;
-        _dir   = 1;
         servo_set_angle(ServoId::SERVO1, _angle);
         _hdr = true;
     }
 
-    if (button_just_pressed(BTN_CYCLE)) {
-        _mark_active();
-        _angle += 15;
-        if (_angle > 180) _angle = 0;
+    // Map pot (0-4095) → angle (0-180) with hysteresis via pot_position(181)
+    int16_t new_angle = (int16_t)pot_position(181);  // 0..180
+    if (new_angle != _angle) {
+        _angle = new_angle;
         servo_set_angle(ServoId::SERVO1, _angle);
-        _manual      = true;
-        _last_sweep  = millis();  // pause auto-sweep for 1s
-    }
-
-    // Auto-sweep (resumes 1 s after manual nudge)
-    if (!_manual || (millis() - _last_sweep > 1000)) {
-        _manual = false;
-        if (millis() - _last_sweep >= 25) {
-            _last_sweep = millis();
-            _angle += _dir * 2;
-            if (_angle >= 180) { _angle = 180; _dir = -1; }
-            if (_angle <=   0) { _angle =   0; _dir =  1; }
-            servo_set_angle(ServoId::SERVO1, _angle);
-        }
+        _mark_active();
     }
 
     // Redraw at 30 fps
@@ -1023,30 +1274,386 @@ static void _demo_servo() {
     display_fill_rect(0, CY_ARC + R + 4, DISP_W, 10, C_BG);
     display_text_centred(0, CY_ARC + R + 4, DISP_W, buf, C_ACCENT2, C_BG, 1);
 
-    // Direction arrow
-    const char *dir_s = (_dir > 0) ? "sweep ->" : "<- sweep";
-    display_fill_rect(0, CY_ARC + R + 14, DISP_W, 8, C_BG);
-    display_text_centred(0, CY_ARC + R + 14, DISP_W, dir_s, C_DKGREY, C_BG, 1);
+    // Pot position bar (shows where the dial is physically)
+    constexpr int16_t BAR_X = 8, BAR_W = DISP_W - 16, BAR_Y_OFF = R + 15;
+    int16_t bar_filled = (int16_t)((float)_angle / 180.0f * (float)BAR_W);
+    display_fill_rect(BAR_X,              CY_ARC + BAR_Y_OFF, BAR_W,       6, C_PANEL);
+    display_fill_rect(BAR_X,              CY_ARC + BAR_Y_OFF, bar_filled,  6, C_ACCENT);
+    display_rect     (BAR_X - 1,          CY_ARC + BAR_Y_OFF - 1, BAR_W + 2, 8, C_DKGREY);
 
     if (_check_back()) { _hdr = false; }
 }
 
 // ---------------------------------------------------------------------------
-// Idle animation — minimal professional standby
+// Screen: WiFi Info — AP credentials, IP, connected clients, web URL
+// ---------------------------------------------------------------------------
+static void _screen_wifi() {
+    static bool          _hdr  = false;
+    static unsigned long _last = 0;
+
+    if (!_hdr) {
+        display_clear_bg();
+        display_header("WIFI AP", HDR_H);
+
+        int16_t y = HDR_BOT + 2;
+        display_kv(y, "SSID",  WIFI_AP_SSID);      y += ROW_PX + 1;
+        display_kv(y, "Pass",  WIFI_AP_PASSWORD);   y += ROW_PX + 1;
+        display_kv(y, "IP",    "192.168.4.1");       y += ROW_PX + 1;
+        display_kv(y, "Ch",    String(WIFI_AP_CHANNEL).c_str()); y += ROW_PX + 1;
+
+        display_footer("SCAN", "HOLD");
+        _hdr  = true;
+        _last = 0;
+    }
+
+    if (button_just_pressed(BTN_CYCLE)) {
+        _mark_active();
+        _state        = UiState::SCREEN_WIFI_SCAN;
+        _needs_redraw = true;
+        display_clear_bg();
+        _hdr = false;
+        return;
+    }
+
+    if (millis() - _last >= 1000) {
+        _last = millis();
+        int16_t y = HDR_BOT + 2 + 4 * (ROW_PX + 1);
+        char buf[12];
+        snprintf(buf, sizeof(buf), "%d", wifi_ap_client_count());
+        display_kv(y, "Clients", buf); y += ROW_PX + 1;
+        snprintf(buf, sizeof(buf), "%us", (unsigned)(millis() / 1000UL));
+        display_kv(y, "Uptime",  buf);
+    }
+
+    if (_check_back()) _hdr = false;
+}
+
+// ---------------------------------------------------------------------------
+// Screen: WiFi Scanner — scan nearby networks, show SSID + RSSI on TFT
+//   BTN_CYCLE → (re)scan
+//   BTN_SELECT → back
+// ---------------------------------------------------------------------------
+static constexpr int WSCAN_MAX = 16;
+static WifiNetInfo  _wscan_results[WSCAN_MAX];
+static int          _wscan_count  = 0;
+static uint8_t      _wscan_scroll = 0;
+static constexpr uint8_t WSCAN_PAGE = 4;
+
+static void _wscan_draw() {
+    display_clear_bg();
+    display_header("WIFI SCAN", HDR_H);
+
+    if (_wscan_count == 0) {
+        display_text_centred(0, DISP_H / 2 - 8, DISP_W,
+                             "Press NEXT to scan", C_DKGREY, C_BG, 1);
+        display_footer("SCAN", "HOLD");
+        return;
+    }
+
+    // Sort by RSSI descending (simple insertion sort, ≤16 items)
+    for (int i = 1; i < _wscan_count; i++) {
+        WifiNetInfo tmp = _wscan_results[i];
+        int j = i - 1;
+        while (j >= 0 && _wscan_results[j].rssi < tmp.rssi) {
+            _wscan_results[j + 1] = _wscan_results[j]; j--;
+        }
+        _wscan_results[j + 1] = tmp;
+    }
+
+    constexpr int16_t ITEM_H = 14;
+    constexpr int16_t BAR_W  = 30;
+    constexpr int16_t BAR_X  = DISP_W - BAR_W - 2;
+
+    for (int i = 0; i < WSCAN_PAGE; i++) {
+        int idx = _wscan_scroll + i;
+        if (idx >= _wscan_count) break;
+        int16_t y   = HDR_BOT + 2 + (int16_t)i * ITEM_H;
+        const WifiNetInfo &n = _wscan_results[idx];
+
+        // RSSI → fill fraction (−100 dBm = 0, −30 dBm = 1)
+        float frac = ((float)n.rssi + 100.0f) / 70.0f;
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        uint16_t bar_c = (frac < 0.35f) ? C_RED :
+                         (frac < 0.65f) ? C_YELLOW : C_GREEN;
+        int16_t fill = (int16_t)(frac * BAR_W);
+
+        // SSID — truncate to fit
+        char ssid[14]; strncpy(ssid, n.ssid[0] ? n.ssid : "(hidden)", 13); ssid[13] = '\0';
+        display_fill_rect(0, y, DISP_W, ITEM_H - 1, C_BG);
+        display_text(2, y + 1, ssid, C_WHITE, C_BG, 1);
+
+        // Lock icon placeholder
+        if (n.enc) display_text(2, y + 8, "*", C_YELLOW, C_BG, 1);
+
+        // Channel
+        char ch[4]; snprintf(ch, sizeof(ch), "ch%d", n.ch);
+        display_text(BAR_X - 20, y + 3, ch, C_DKGREY, C_BG, 1);
+
+        // RSSI bar
+        display_fill_rect(BAR_X, y + 3, BAR_W, 8, C_PANEL);
+        display_rect     (BAR_X, y + 3, BAR_W, 8, C_DKGREY);
+        if (fill > 0)
+            display_fill_rect(BAR_X + 1, y + 4, fill, 6, bar_c);
+    }
+
+    // Scrollbar
+    if (_wscan_count > WSCAN_PAGE) {
+        constexpr int16_t SB_X = DISP_W - 2;
+        int16_t total_h  = WSCAN_PAGE * ITEM_H;
+        int16_t thumb_h  = (int16_t)((uint32_t)total_h * WSCAN_PAGE / _wscan_count);
+        if (thumb_h < 4) thumb_h = 4;
+        int16_t thumb_y  = HDR_BOT + 2 +
+            (int16_t)((uint32_t)(total_h - thumb_h) * _wscan_scroll / (_wscan_count - WSCAN_PAGE));
+        display_fill_rect(SB_X, HDR_BOT + 2, 2, total_h, C_DKGREY);
+        display_fill_rect(SB_X, thumb_y,      2, thumb_h, C_ACCENT);
+    }
+
+    char cnt[12]; snprintf(cnt, sizeof(cnt), "%d nets", _wscan_count);
+    display_footer(cnt, "HOLD");
+}
+
+static void _screen_wifi_scan() {
+    static bool _hdr        = false;
+    static bool _scanning   = false;
+
+    if (!_hdr) {
+        _wscan_count  = 0;
+        _wscan_scroll = 0;
+        _wscan_draw();
+        _hdr = true;
+    }
+
+    if (button_just_pressed(BTN_CYCLE)) {
+        _mark_active();
+        if (!_scanning) {
+            _scanning = true;
+            display_clear_bg();
+            display_header("WIFI SCAN", HDR_H);
+            display_text_centred(0, DISP_H / 2 - 4, DISP_W, "Scanning...", C_ACCENT2, C_BG, 1);
+            display_footer("...", "HOLD");
+            led_yellow();
+            _wscan_count  = wifi_scan_networks(_wscan_results, WSCAN_MAX);
+            _wscan_scroll = 0;
+            _scanning     = false;
+            led_green();
+            _wscan_draw();
+        }
+        return;
+    }
+
+    if (button_just_pressed(BTN_SELECT)) {
+        _mark_active();
+        // Also allow scrolling with pot if there are results
+        if (_wscan_count > WSCAN_PAGE) {
+            uint8_t new_scroll = (uint8_t)((uint32_t)pot_position(100)
+                                 * (_wscan_count - WSCAN_PAGE) / 99);
+            if (new_scroll != _wscan_scroll) {
+                _wscan_scroll = new_scroll;
+                _wscan_draw();
+                return;
+            }
+        }
+        _state        = UiState::MENU;
+        _needs_redraw = true;
+        display_clear_bg();
+        _hdr = false;
+        Serial.println("[ui] wifi scan -> menu");
+        return;
+    }
+
+    // Pot scrolling
+    if (_wscan_count > WSCAN_PAGE && pot_moved()) {
+        _mark_active();
+        uint8_t new_scroll = (uint8_t)((uint32_t)pot_position(100)
+                             * (_wscan_count - WSCAN_PAGE) / 99);
+        if (new_scroll != _wscan_scroll) {
+            _wscan_scroll = new_scroll;
+            _wscan_draw();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Screen: BLE Radar — scan for BLE devices, show name/addr/RSSI on TFT
+//   BTN_CYCLE → (re)scan
+//   BTN_SELECT → back
+// ---------------------------------------------------------------------------
+static constexpr int BLE_MAX = 16;
+static BleDevInfo   _ble_results[BLE_MAX];
+static int          _ble_count  = 0;
+static uint8_t      _ble_scroll = 0;
+static constexpr uint8_t BLE_PAGE = 4;
+
+static void _ble_draw() {
+    display_clear_bg();
+    display_header("BLE RADAR", HDR_H);
+
+    if (_ble_count == 0) {
+        display_text_centred(0, DISP_H / 2 - 8, DISP_W,
+                             "Press NEXT to scan", C_DKGREY, C_BG, 1);
+        display_footer("SCAN", "HOLD");
+        return;
+    }
+
+    // Sort by RSSI descending
+    for (int i = 1; i < _ble_count; i++) {
+        BleDevInfo tmp = _ble_results[i];
+        int j = i - 1;
+        while (j >= 0 && _ble_results[j].rssi < tmp.rssi) {
+            _ble_results[j + 1] = _ble_results[j]; j--;
+        }
+        _ble_results[j + 1] = tmp;
+    }
+
+    constexpr int16_t ITEM_H = 14;
+    constexpr int16_t BAR_W  = 24;
+    constexpr int16_t BAR_X  = DISP_W - BAR_W - 2;
+
+    for (int i = 0; i < BLE_PAGE; i++) {
+        int idx = _ble_scroll + i;
+        if (idx >= _ble_count) break;
+        int16_t y = HDR_BOT + 2 + (int16_t)i * ITEM_H;
+        const BleDevInfo &dev = _ble_results[idx];
+
+        // Name or address
+        char label[14];
+        if (dev.name[0]) {
+            strncpy(label, dev.name, 13);
+        } else {
+            // Show last 8 chars of addr (xx:xx:xx)
+            int alen = strlen(dev.addr);
+            const char *tail = (alen > 8) ? dev.addr + alen - 8 : dev.addr;
+            strncpy(label, tail, 13);
+        }
+        label[13] = '\0';
+
+        display_fill_rect(0, y, DISP_W, ITEM_H - 1, C_BG);
+        display_text(2, y + 1, label, dev.name[0] ? C_WHITE : C_LTGREY, C_BG, 1);
+
+        // RSSI text
+        char rssi_s[8]; snprintf(rssi_s, sizeof(rssi_s), "%d", dev.rssi);
+        display_text(BAR_X - 22, y + 3, rssi_s, C_DKGREY, C_BG, 1);
+
+        // RSSI bar
+        float frac = ((float)dev.rssi + 100.0f) / 70.0f;
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        uint16_t bar_c = (frac < 0.35f) ? C_RED :
+                         (frac < 0.65f) ? C_YELLOW : C_PURPLE;
+        int16_t fill = (int16_t)(frac * BAR_W);
+        display_fill_rect(BAR_X, y + 3, BAR_W, 8, C_PANEL);
+        display_rect     (BAR_X, y + 3, BAR_W, 8, C_DKGREY);
+        if (fill > 0)
+            display_fill_rect(BAR_X + 1, y + 4, fill, 6, bar_c);
+    }
+
+    // Scrollbar
+    if (_ble_count > BLE_PAGE) {
+        constexpr int16_t SB_X = DISP_W - 2;
+        int16_t total_h = BLE_PAGE * ITEM_H;
+        int16_t thumb_h = (int16_t)((uint32_t)total_h * BLE_PAGE / _ble_count);
+        if (thumb_h < 4) thumb_h = 4;
+        int16_t thumb_y = HDR_BOT + 2 +
+            (int16_t)((uint32_t)(total_h - thumb_h) * _ble_scroll / (_ble_count - BLE_PAGE));
+        display_fill_rect(SB_X, HDR_BOT + 2, 2, total_h, C_DKGREY);
+        display_fill_rect(SB_X, thumb_y,      2, thumb_h, C_PURPLE);
+    }
+
+    char cnt[12]; snprintf(cnt, sizeof(cnt), "%d devs", _ble_count);
+    display_footer(cnt, "HOLD");
+}
+
+static void _screen_ble_scan() {
+    static bool _hdr      = false;
+    static bool _scanning = false;
+
+    if (!_hdr) {
+        _ble_count  = 0;
+        _ble_scroll = 0;
+        _ble_draw();
+        _hdr = true;
+    }
+
+    if (button_just_pressed(BTN_CYCLE)) {
+        _mark_active();
+        if (!_scanning) {
+            _scanning = true;
+            display_clear_bg();
+            display_header("BLE RADAR", HDR_H);
+            display_text_centred(0, DISP_H / 2 - 8, DISP_W, "Scanning BLE...",   C_PURPLE, C_BG, 1);
+            display_text_centred(0, DISP_H / 2 + 2, DISP_W, "(~4 seconds)",       C_DKGREY, C_BG, 1);
+            display_footer("...", "...");
+            led_yellow();
+            _ble_count  = ble_scan_devices(_ble_results, BLE_MAX);
+            _ble_scroll = 0;
+            _scanning   = false;
+            led_green();
+            _ble_draw();
+        }
+        return;
+    }
+
+    if (button_just_pressed(BTN_SELECT)) {
+        _mark_active();
+        _state        = UiState::MENU;
+        _needs_redraw = true;
+        display_clear_bg();
+        _hdr = false;
+        Serial.println("[ui] ble scan -> menu");
+        return;
+    }
+
+    // Pot scrolling
+    if (_ble_count > BLE_PAGE && pot_moved()) {
+        _mark_active();
+        uint8_t new_scroll = (uint8_t)((uint32_t)pot_position(100)
+                             * (_ble_count - BLE_PAGE) / 99);
+        if (new_scroll != _ble_scroll) {
+            _ble_scroll = new_scroll;
+            _ble_draw();
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Idle animation — starfield with pulsing title
 // ---------------------------------------------------------------------------
 static void _draw_idle() {
     static unsigned long _last = 0;
     static uint8_t       _t    = 0;
 
-    if (millis() - _last < 60) return;
+    if (millis() - _last < 30) return;
     _last = millis();
     _t++;
 
-    // Slowly pulse "STANDBY" between dim grey and dark grey
-    float s = 0.5f + 0.5f * sinf(_t * 0.04f);
-    uint16_t c = colour_blend(C_DKGREY, C_GREY, (uint8_t)(s * 255.0f));
-    display_fill_rect(0, DISP_H / 2 - 4, DISP_W, 8, C_BG);
-    display_text_centred(0, DISP_H / 2 - 4, DISP_W, "STANDBY", c, C_BG, 1);
+    if (!_ss_init) _splash_stars_reset();
+
+    TFT_eSPI *tft = display_get_tft();
+
+    // Erase → move → redraw each star directly (no full-screen clear needed)
+    for (uint8_t i = 0; i < 32; i++) {
+        tft->drawPixel(_ss[i].x, _ss[i].y, C_BG);   // erase old
+        _ss[i].x -= _ss[i].spd;
+        if (_ss[i].x < 0) {
+            _ss[i].x   = DISP_W - 1;
+            _ss[i].y   = (int8_t)random(0, DISP_H);
+            _ss[i].bri = (uint8_t)random(25, 140);
+            _ss[i].spd = (uint8_t)random(1, 4);
+        }
+        uint8_t b = _ss[i].bri + (_ss[i].spd - 1) * 25;
+        tft->drawPixel(_ss[i].x, _ss[i].y, colour_blend(C_BG, C_GREY, b));
+    }
+
+    // Pulsing centred text
+    float    s   = 0.5f + 0.5f * sinf(_t * 0.04f);
+    float    s2  = 0.5f + 0.5f * sinf(_t * 0.04f + 1.5f);
+    uint16_t c1  = colour_blend(C_BG, C_ACCENT,  (uint8_t)(s  * 160));
+    uint16_t c2  = colour_blend(C_BG, C_DKGREY,  (uint8_t)(s2 * 200));
+    int16_t  cy  = DISP_H / 2 - 8;
+    display_fill_rect(0, cy, DISP_W, 18, C_BG);
+    display_text_centred(0, cy,      DISP_W, "ROBOT CTRL",     c1, C_BG, 1);
+    display_text_centred(0, cy + 10, DISP_W, "averyizatt.com", c2, C_BG, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1082,6 +1689,9 @@ void ui_update() {
         case UiState::DEMO_ULTRASONIC: _demo_ultrasonic();  break;
         case UiState::DEMO_HALL:       _demo_hall();        break;
         case UiState::DEMO_SERVO:      _demo_servo();       break;
+        case UiState::SCREEN_WIFI:      _screen_wifi();      break;
+        case UiState::SCREEN_WIFI_SCAN: _screen_wifi_scan(); break;
+        case UiState::SCREEN_BLE_SCAN:  _screen_ble_scan();  break;
         case UiState::SCREEN_GAMES:
             if (games_menu()) {
                 // games_menu() returned true = player chose back to main menu

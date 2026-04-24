@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
-#include <SPI.h>
+#include <TFT_eSPI.h>
 #include "config.h"
 
 // =============================================================================
@@ -14,25 +14,28 @@ static constexpr int16_t  DISP_H    =  80;   // pixels tall
 static constexpr uint8_t  ROW_PX    =   8;   // pixels per text row (size-1 font)
 
 // --- Colour palette (RGB565) — Material Design dark theme ------------------
-static constexpr uint16_t C_BLACK    = 0x0000;
-static constexpr uint16_t C_WHITE    = 0xFFFF;
-static constexpr uint16_t C_GREEN    = 0x07E0;
-static constexpr uint16_t C_RED      = 0xF800;
-static constexpr uint16_t C_CYAN     = 0x07FF;
-static constexpr uint16_t C_YELLOW   = 0xFFE0;
-static constexpr uint16_t C_MAGENTA  = 0xF81F;
-static constexpr uint16_t C_ORANGE   = 0xFD20;
-static constexpr uint16_t C_GREY     = 0x7BEF;   // medium emphasis text
-static constexpr uint16_t C_DKGREY   = 0x39E7;   // borders, disabled text
-static constexpr uint16_t C_LTGREY   = 0xC618;   // secondary text
-static constexpr uint16_t C_NAVY     = 0x000F;
-static constexpr uint16_t C_DKBLUE   = 0x0318;
-static constexpr uint16_t C_BLUE     = 0x001F;
-static constexpr uint16_t C_ACCENT   = 0x5CDA;   // steel blue  (#5B99D5)
-static constexpr uint16_t C_ACCENT2  = 0xED46;   // warm amber  (#EEAA31)
-static constexpr uint16_t C_BG       = 0x1082;   // charcoal    (#121212)
-static constexpr uint16_t C_PANEL    = 0x2945;   // elevated surface (#282830)
-static constexpr uint16_t C_HILIGHT  = 0x7E3D;   // light blue  (#7BC6EE)
+// Values are pre-inverted (XOR 0xFFFF) to compensate for the ST7735S panel's
+// hardware colour inversion that cannot be overridden via software INVON.
+static constexpr uint16_t C_BLACK    = 0xFFFF;   // sends white → displays black
+static constexpr uint16_t C_WHITE    = 0x0000;   // sends black → displays white
+static constexpr uint16_t C_GREEN    = 0xF81F;
+static constexpr uint16_t C_RED      = 0x07FF;
+static constexpr uint16_t C_CYAN     = 0xF800;
+static constexpr uint16_t C_YELLOW   = 0x001F;
+static constexpr uint16_t C_MAGENTA  = 0x07E0;
+static constexpr uint16_t C_PURPLE   = 0x7FE0;
+static constexpr uint16_t C_ORANGE   = 0x02DF;
+static constexpr uint16_t C_GREY     = 0x8410;   // medium emphasis text
+static constexpr uint16_t C_DKGREY   = 0xC618;   // borders, disabled text
+static constexpr uint16_t C_LTGREY   = 0x39E7;   // secondary text
+static constexpr uint16_t C_NAVY     = 0xFFF0;
+static constexpr uint16_t C_DKBLUE   = 0xFCE7;
+static constexpr uint16_t C_BLUE     = 0xFFE0;
+static constexpr uint16_t C_ACCENT   = 0xA325;   // steel blue  (#5B99D5)
+static constexpr uint16_t C_ACCENT2  = 0x12B9;   // warm amber  (#EEAA31)
+static constexpr uint16_t C_BG       = 0xEF7D;   // charcoal    (#121212)
+static constexpr uint16_t C_PANEL    = 0xD6BA;   // elevated surface (#282830)
+static constexpr uint16_t C_HILIGHT  = 0x81C2;   // light blue  (#7BC6EE)
 
 // Helper: make RGB565 from 5-bit R, 6-bit G, 5-bit B
 static inline constexpr uint16_t RGB565(uint8_t r, uint8_t g, uint8_t b) {
@@ -58,6 +61,9 @@ void display_fill_circle(int16_t cx, int16_t cy, int16_t r, uint16_t colour);
 void display_triangle(int16_t x0, int16_t y0,
                       int16_t x1, int16_t y1,
                       int16_t x2, int16_t y2, uint16_t colour);
+void display_fill_triangle(int16_t x0, int16_t y0,
+                           int16_t x1, int16_t y1,
+                           int16_t x2, int16_t y2, uint16_t colour);
 
 // Draw a string at pixel coordinates. size 1=6×8, 2=12×16.
 void display_text(int16_t x, int16_t y, const char *str,
@@ -94,3 +100,10 @@ void display_bar(int16_t y, uint8_t percent, uint16_t fill_colour = C_ACCENT);
 
 // Styled footer with two labelled button hints.
 void display_footer(const char *left_hint, const char *right_hint);
+
+// Expose raw TFT handle for sprite-based rendering (e.g. games).
+class TFT_eSPI;
+TFT_eSPI *display_get_tft();
+
+// Raw TFT handle — for TFT_eSprite creation in games
+TFT_eSPI *display_get_tft();

@@ -38,6 +38,11 @@
    - [Library Dependencies](#library-dependencies)
    - [Firmware Architecture](#firmware-architecture)
    - [PWM Configuration](#pwm-configuration)
+   - [WiFi Access Point & Web Dashboard](#wifi-access-point--web-dashboard)
+   - [BLE GATT Server](#ble-gatt-server)
+   - [On-Device UI](#on-device-ui)
+     - [Main Menu](#main-menu)
+     - [Games](#games)
 8. [Repository Structure](#repository-structure)
 9. [Hardware Files](#hardware-files)
 10. [Contributing](#contributing)
@@ -117,10 +122,15 @@ The diagram below shows how all onboard subsystems connect to the ESP32-S3:
 | **Ultrasonic Sensors** | 4× HC-SR04 | 2–400 cm range, 15° beam angle |
 | **Hall Effect Sensors** | 2× inputs | Wheel speed, pulse counting, position feedback |
 | **IMU** | I2C header | MPU-6050, ICM-42688, or any I2C IMU |
-| **SPI Display** | Connector | ST7735 / ILI9341 or compatible |
+| **SPI Display** | ST7735S 160×80 | TFT_eSPI driver, tabbed on-device UI |
 | **Push Buttons** | 3× SMD tactile | Internal pull-up, debounced in firmware |
 | **Expansion** | 6× GPIO header | GPIO 37, 38, 40, 43, 44, 48 broken out |
 | **Power** | LDO + distribution | Onboard 3.3 V regulation, motor VM bus |
+| **WiFi AP** | Soft Access Point | SSID `RoboController`, live sensor dashboard |
+| **Web Dashboard** | AsyncWebSocket | Tabbed UI: sensors, WiFi scan, BLE radar, drive control |
+| **Remote Control** | WebSocket JSON | Browser joystick → motor drive; servo sliders |
+| **BLE GATT Server** | NimBLE-Arduino | Sensor notify + motor/servo write characteristics |
+| **BLE Scanner** | Passive scan | Detect nearby BLE devices, shown on TFT and dashboard |
 
 ---
 
@@ -369,7 +379,7 @@ An SPI display connector supports ST7735, ST7789, ILI9341, or any SPI display wi
 | DC | 36 | Data / Command select |
 | RES | 39 | Hardware reset |
 
-The firmware uses **Adafruit GFX** for graphics primitives (text, lines, shapes) and a compatible display driver (e.g., Adafruit_ST7735) for hardware communication.
+The firmware uses **TFT_eSPI** for hardware-accelerated graphics and text rendering on the ST7735S 160×80 display. A custom colour palette and tabbed on-device UI are implemented in `display.h/cpp` and `ui.h/cpp`.
 
 ---
 
@@ -423,47 +433,63 @@ Six GPIO pins are broken out on **J9** for custom peripherals, additional sensor
 # 1. Clone the repository
 git clone https://github.com/averyizatt/ESP32BasedRobiticsPCB.git
 
-# 2. Open the firmware project
-# Arduino IDE: File → Open → firmware/ESP32RoboticsController/ESP32RoboticsController.ino
-# PlatformIO:  open the firmware/ directory as a project
+# 2. Open in PlatformIO (recommended)
+#    File → Open Folder → ESP32BasedRobiticsPCB
+#    PlatformIO auto-resolves all lib_deps from platformio.ini
+
+# 3. Build
+pio run --environment esp32s3
+
+# 4. Upload
+pio run --target upload --environment esp32s3
 ```
 
-1. Install **Arduino IDE 2.x** or **PlatformIO**
-2. Add ESP32 board support:
-   - Arduino: **Boards Manager** → search `esp32` by Espressif → Install
-   - PlatformIO: `platform = espressif32` in `platformio.ini`
-3. Open `firmware/ESP32RoboticsController/ESP32RoboticsController.ino`
-4. Select board: **ESP32S3 Dev Module**
-5. Install required libraries (see [Library Dependencies](#library-dependencies))
-6. Connect the board via USB, select the correct COM port, and click **Upload**
+1. Install **PlatformIO** (VS Code extension or CLI)
+2. Open the repo root as the workspace
+3. PlatformIO resolves all library dependencies automatically from `platformio.ini`
+4. Select the **esp32s3** environment, build, and upload
+5. After boot, connect to WiFi SSID `RoboController` (password `robot1234`) and navigate to `http://192.168.4.1`
 
 ### Library Dependencies
 
-Install via **Arduino Library Manager** or PlatformIO's library registry:
+All dependencies are declared in `platformio.ini` and resolved automatically by PlatformIO. For manual Arduino IDE installs use the Library Manager names below.
 
-| Library | Purpose | Arduino Library Manager Name |
+| Library | Version | Purpose |
 |---|---|---|
-| ESP32Servo | Servo PWM generation | `ESP32Servo` |
-| Adafruit GFX | 2D graphics primitives | `Adafruit GFX Library` |
-| Adafruit ST7735 | ST7735 display driver | `Adafruit ST7735 and ST7789 Library` |
-| Wire | I2C (built-in) | — |
-| SPI | SPI (built-in) | — |
+| `madhephaestus/ESP32Servo` | ^3.0.6 | RC servo 50 Hz PWM |
+| `bodmer/TFT_eSPI` | ^2.5.43 | ST7735S SPI display driver + graphics |
+| `ESP32Async/AsyncTCP` | ^3.3.2 | Async TCP foundation for web server |
+| `ESP32Async/ESPAsyncWebServer` | ^3.7.4 | Async HTTP + WebSocket server |
+| `h2zero/NimBLE-Arduino` | ^1.4.3 | BLE stack (GATT server + scanning) |
+| `Wire` | built-in | I2C for IMU |
+| `WiFi` | built-in | Soft AP + network scanning |
+
+> **TFT_eSPI user config:** The library reads pin assignments from `User_Setup.h`. Ensure the file in your PlatformIO build includes the ST7735S settings matching `config.h` (MOSI=37, SCLK=38, CS=35, DC=36, RST=39).
 
 ### Firmware Architecture
 
-The firmware is organized as a set of independent peripheral modules — each with its own header and source file — all coordinated from the main `.ino` entry point:
+The firmware is organized as a set of independent peripheral modules — each with its own header and source file — all coordinated from `main.cpp`:
 
 ```
 ESP32RoboticsController/
-├── ESP32RoboticsController.ino   ← setup() + loop() entry point
-├── config.h                      ← All pin definitions and tuning constants
-├── motors.h / motors.cpp         ← DRV8871 LEDC-based motor control
-├── servos.h / servos.cpp         ← RC servo PWM control
+├── main.cpp                         ← setup() + loop() entry point
+├── config.h                         ← All pin definitions and tuning constants
+│
+├── motors.h / motors.cpp            ← DRV8871 LEDC-based motor control
+├── servos.h / servos.cpp            ← RC servo PWM control
 ├── ultrasonics.h / ultrasonics.cpp  ← HC-SR04 distance measurement
-├── hall_sensors.h / hall_sensors.cpp  ← Interrupt-based pulse counting
-├── display.h / display.cpp       ← SPI display abstraction (Adafruit GFX)
-├── imu.h / imu.cpp               ← I2C IMU read abstraction
-└── buttons.h / buttons.cpp       ← Debounced button state machine
+├── hall_sensors.h / hall_sensors.cpp← Interrupt-based pulse counting
+├── imu.h / imu.cpp                  ← I2C IMU read abstraction (MPU-6050)
+├── buttons.h / buttons.cpp          ← Debounced button state machine
+├── led.h / led.cpp                  ← Onboard LED control
+├── pot.h                            ← Potentiometer / ADC helper
+│
+├── display.h / display.cpp          ← TFT_eSPI display abstraction + colour palette
+├── ui.h / ui.cpp                    ← On-device tabbed UI state machine
+├── games.h / games.cpp              ← Mini-game / demo logic
+│
+└── wifi_server.h / wifi_server.cpp  ← WiFi soft AP, AsyncWebServer, WebSocket push,
+                                        BLE GATT server, WiFi/BLE scanner helpers
 ```
 
 All pin assignments and tunable parameters are centralized in `config.h` — adapting the firmware to a modified hardware revision only requires editing that single file.
@@ -480,32 +506,189 @@ Motor PWM is generated using the ESP32-S3's **LEDC peripheral**, which provides 
 
 ---
 
+### WiFi Access Point & Web Dashboard
+
+The firmware starts a **soft Access Point** on boot. Connect any browser-capable device to control and monitor the robot.
+
+| Setting | Value |
+|---|---|
+| SSID | `RoboController` |
+| Password | `robot1234` |
+| IP Address | `192.168.4.1` |
+| WebSocket | `ws://192.168.4.1/ws` |
+
+The dashboard is a single-page app served from PROGMEM with four tabs:
+
+| Tab | Contents |
+|---|---|
+| **Sensors** | Live IMU (accel + gyro axis bars), ultrasonic proximity radar, heap gauge, hall encoder counts, button tiles, uptime |
+| **WiFi Scanner** | Scan nearby networks — SSID, signal strength bar, channel, security badge |
+| **BLE Radar** | Scan for BLE devices — name, RSSI, MAC address |
+| **Control** | Virtual joystick (touch + mouse), dual servo sliders, emergency stop, command log |
+
+Sensor data is pushed over **WebSocket** (no polling) at a configurable interval (`WIFI_WS_PUSH_MS`, default 200 ms).
+
+#### REST Endpoints
+
+| Endpoint | Method | Response |
+|---|---|---|
+| `/` | GET | Full HTML dashboard |
+| `/api/scan` | GET | JSON array of nearby WiFi networks |
+| `/api/ble` | GET | JSON array of scanned BLE devices (~4 s scan) |
+
+#### WebSocket Commands (browser → robot)
+
+The robot accepts inbound JSON commands over the same WebSocket connection:
+
+```json
+// Drive both motors (speed: -255 to +255)
+{ "t": "drive", "l": 200, "r": -150 }
+
+// Set servo angle (id: 1 or 2, angle: 0–180°)
+{ "t": "servo", "id": 1, "angle": 90 }
+
+// Emergency stop — coasts both motors
+{ "t": "stop" }
+```
+
+---
+
+### BLE GATT Server
+
+The firmware advertises a custom BLE GATT service alongside the WiFi AP — connect from **nRF Connect**, **LightBlue**, or any GATT-capable app.
+
+| Item | UUID | Properties | Format |
+|---|---|---|---|
+| Service | `AB12` | — | — |
+| Sensor Notify | `AA13` | Read + Notify | Compact JSON: accel, gyro, ultrasonic |
+| Motor Write | `AA14` | Write | `l:<speed>,r:<speed>` e.g. `l:200,r:-150` |
+| Servo Write | `AA15` | Write | `<id>:<angle>` e.g. `1:90` |
+
+The sensor characteristic sends a live data notification every **500 ms** when a central is connected:
+
+```json
+{"ax":0.01,"ay":-0.03,"az":9.81,"gx":0.2,"gy":-0.1,"gz":0.0,"u":[45.2,120.0,-1.0,88.4]}
+```
+
+(`u` values are ultrasonic distances in cm; `-1` = no echo / out of range)
+
+---
+
+### On-Device UI
+
+A tabbed menu system runs on the 160×80 TFT display. Navigation uses two push buttons and the onboard potentiometer. An auto-idle screensaver activates after 20 seconds of inactivity.
+
+**Navigation:**
+- **BTN1 (CYCLE)** — scroll to next item / primary action in games
+- **BTN2 (SELECT)** — confirm / enter / secondary action in games
+- **Potentiometer** — scroll lists, pilot characters in games, adjust values
+
+#### Main Menu
+
+| Menu Item | Screen | Description |
+|---|---|---|
+| Sensors | Live readout | All sensor values: ultrasonic distances, hall encoder counts, button states, uptime |
+| IMU Data | Live readout | Accelerometer (X/Y/Z in g) and gyroscope (X/Y/Z in °/s) with temperature |
+| Tilt Demo | Animation | Graphical liquid-level tilt visualiser driven by IMU pitch/roll |
+| Motors | Live readout | Current motor speed and direction for both motor channels |
+| Ultrasonic | Radar demo | Real-time 4-direction proximity radar on TFT |
+| Hall Demo | Live readout | Wheel pulse counts and pulses-per-second for both encoder channels |
+| Servo Demo | Auto sweep | Automated servo 1 & 2 sweep from 0° → 180° → 0° |
+| System | Info screen | Firmware uptime, heap usage, CPU frequency, chip info |
+| Games | Sub-menu | Arcade game launcher (see Games section below) |
+| WiFi Info | Info screen | AP SSID, password, IP address, connected client count |
+| WiFi Scan | Scanner | Nearby WiFi networks with RSSI bars; pot scrolls list |
+| BLE Radar | Scanner | Nearby BLE devices with RSSI bars; 4-second active scan |
+
+#### Games
+
+The Games menu launches a sub-menu with three sprite-rendered arcade games. All games use a **full-screen off-screen framebuffer** (TFT_eSprite) pushed via DMA for zero-flicker 40 fps rendering. Win/loss statistics are stored in RAM for the session and displayed in the game menu next to each title.
+
+---
+
+##### Snake
+
+> Classic snake — eat food to grow, avoid your own tail. Walls wrap.
+
+| Detail | Value |
+|---|---|
+| Grid | 40 × 14 cells (4 px each) |
+| Win condition | Score 20 food pieces |
+| Controls | Potentiometer (turn left/right) or BTN1/BTN2 (turn right/left) |
+| Speed | Increases with score (160 ms → 50 ms minimum tick) |
+| Visual effects | Gradient tail fade, pulsing food, particle burst on eat/death, screen shake on collision |
+
+---
+
+##### Pong
+
+> Single-player Pong — keep the ball alive and score paddle hits.
+
+| Detail | Value |
+|---|---|
+| Win condition | 10 paddle hits |
+| Lives | 3 |
+| Controls | Potentiometer maps directly to paddle Y position; BTN1 nudges up |
+| Difficulty | Ball speed +0.15 per hit, capped at 5.5 px/frame |
+| Visual effects | 6-frame ball trail, glowing neon paddle, particle bursts on wall/paddle hits, screen shake on miss |
+
+---
+
+##### Asteroids
+
+> Side-scrolling asteroid dodge — survive as long as possible.
+
+| Detail | Value |
+|---|---|
+| Win condition | Survive 1500 score ticks (~37 s at 40 fps) |
+| Lives | 3 |
+| Controls | Potentiometer steers ship Y (smoothed); BTN1 held = thrust boost upward |
+| Difficulty | Rock speed 2.2 → 5.0 px/frame; spawn interval 1100 → 350 ms |
+| Visual effects | 3-layer parallax starfield, procedural 8-vertex asteroid shapes, thruster flame + exhaust particles, invulnerability blink after hit, screen shake on collision |
+
+---
+
+All three games share:
+- **Particle system** — 24-particle pool with gravity and colour fade, reused across all effects
+- **Screen shake** — configurable intensity applied as DMA push offset
+- **Session W/L stats** — shown in the games menu and on the game-over screen
+- **LED feedback** — green on score/win, red on death/hit, blue on game start
+
+---
+
 ## Repository Structure
 
 ```
 ESP32BasedRobiticsPCB/
 │
-├── firmware/                          # Arduino/ESP32-S3 firmware
+├── platformio.ini                     ← PlatformIO project config + lib_deps
+│
+├── firmware/
 │   └── ESP32RoboticsController/
-│       ├── ESP32RoboticsController.ino
+│       ├── main.cpp                   ← setup() + loop() entry point
 │       ├── config.h                   ← Pin map & constants (start here)
-│       ├── motors.h / motors.cpp
-│       ├── servos.h / servos.cpp
-│       ├── ultrasonics.h / ultrasonics.cpp
-│       ├── hall_sensors.h / hall_sensors.cpp
-│       ├── display.h / display.cpp
-│       ├── imu.h / imu.cpp
-│       └── buttons.h / buttons.cpp
+│       ├── motors.h / motors.cpp      ← DRV8871 LEDC motor control
+│       ├── servos.h / servos.cpp      ← RC servo PWM
+│       ├── ultrasonics.h / ultrasonics.cpp  ← HC-SR04 distance
+│       ├── hall_sensors.h / hall_sensors.cpp← Interrupt pulse counting
+│       ├── imu.h / imu.cpp            ← MPU-6050 I2C abstraction
+│       ├── buttons.h / buttons.cpp    ← Debounced buttons
+│       ├── led.h / led.cpp            ← Onboard LED
+│       ├── pot.h                      ← ADC potentiometer
+│       ├── display.h / display.cpp    ← TFT_eSPI wrapper + colour palette
+│       ├── ui.h / ui.cpp              ← On-device tabbed UI state machine
+│       ├── games.h / games.cpp        ← Demo / mini-game logic
+│       └── wifi_server.h / wifi_server.cpp  ← WiFi AP, web dashboard,
+│                                              WebSocket, BLE GATT
 │
 └── hardware/                          # KiCad 7 PCB design files
-    ├── ESP32RoboticsController.kicad_pro
-    ├── ESP32RoboticsController.kicad_sch
-    ├── ESP32RoboticsController.kicad_pcb
-    ├── ESP32RoboticsController.kicad_dru
-    ├── fp-lib-table
-    ├── sym-lib-table
-    ├── gerbers/                       ← Fabrication-ready Gerber files
-    └── bom/                           ← Bill of materials
+    ├── kicadProject/
+    │   ├── Tank.kicad_pro
+    │   ├── Tank.kicad_sch
+    │   ├── Tank.kicad_pcb
+    │   └── Tank.step
+    ├── gerbers/                        ← Fabrication-ready Gerber files
+    └── bom/                            ← Bill of materials (bom.csv)
 ```
 
 ---

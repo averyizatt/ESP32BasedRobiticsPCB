@@ -5,11 +5,12 @@
 // =============================================================================
 // Board: ESP32S3 Dev Module
 // Required libraries:
-//   - ESP32Servo    (servo control)
-//   - Wire          (I2C — built-in)
-//   - SPI           (SPI — built-in)
-//   - Adafruit_GFX  (display graphics)
-//   - Adafruit_ST7735 or compatible SPI display driver
+//   - ESP32Servo       (servo control)
+//   - Wire             (I2C — built-in)
+//   - SPI              (SPI — built-in)
+//   - TFT_eSPI         (display driver, replaces Adafruit_ST7735)
+//   - NimBLE-Arduino   (BLE GATT + scanner)
+//   - ESPAsyncWebServer + AsyncTCP  (web dashboard)
 // =============================================================================
 
 // --- Motor 1 (DRV8871) ---

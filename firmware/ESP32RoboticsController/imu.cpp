@@ -19,18 +19,21 @@ bool imu_init() {
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN, I2C_CLOCK_HZ);
 
     // Probe 0x68 then 0x69
+    bool found = false;
     for (uint8_t a = 0x68; a <= 0x69; a++) {
         Wire.beginTransmission(a);
         if (Wire.endTransmission() == 0) {
             _addr = a;
             Serial.printf("[imu] MPU-6050 at 0x%02X\n", a);
-            goto found;
+            found = true;
+            break;
         }
     }
-    Serial.println("[imu] no device found");
-    return false;
+    if (!found) {
+        Serial.println("[imu] no device found");
+        return false;
+    }
 
-found:
     _wreg(0x6B, 0x00);   // PWR_MGMT_1: clear sleep bit, use internal 8MHz osc
     delay(100);
     _wreg(0x19, 0x07);   // SMPLRT_DIV: 125 Hz output rate
