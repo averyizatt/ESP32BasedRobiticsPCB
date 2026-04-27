@@ -91,6 +91,9 @@ void display_text_centred(int16_t x, int16_t y, int16_t w,
 void display_clear()    { _tft.fillScreen(C_BLACK); }
 void display_clear_bg() { _tft.fillScreen(C_BG); }
 
+void display_begin_frame() { _tft.startWrite(); }
+void display_end_frame()   { _tft.endWrite();   }
+
 void display_header(const char *title, uint8_t height) {
     display_fill_rect(0, 0, DISP_W, height, C_PANEL);
     display_hline(0, height, DISP_W, C_ACCENT);
@@ -140,10 +143,39 @@ void display_bar(int16_t y, uint8_t percent, uint16_t fill_colour) {
 }
 
 void display_footer(const char *left_hint, const char *right_hint) {
+    if (!left_hint)  left_hint  = "";
+    if (!right_hint) right_hint = "";
+
     int16_t y = DISP_H - ROW_PX - 1;
     display_hline(0, y, DISP_W, C_DKGREY);
     display_fill_rect(0, y + 1, DISP_W, ROW_PX, C_BG);
-    display_text(3, y + 1, left_hint, C_GREY, C_BG, 1);
+
     int16_t rx = DISP_W - (int16_t)(strlen(right_hint) * 6) - 3;
-    display_text(rx < 3 ? 3 : rx, y + 1, right_hint, C_ACCENT, C_BG, 1);
+    if (rx < 3) rx = 3;
+
+    char clipped_left[28];
+    uint8_t max_left = 0;
+    if (rx > 9) max_left = (uint8_t)((rx - 9) / 6);  // 6 px gap before right hint
+    size_t left_len = strlen(left_hint);
+    if (left_len > max_left) {
+        if (max_left > 3) {
+            size_t copy_len = max_left - 3;
+            if (copy_len >= sizeof(clipped_left)) copy_len = sizeof(clipped_left) - 1;
+            memcpy(clipped_left, left_hint, copy_len);
+            clipped_left[copy_len]     = '.';
+            clipped_left[copy_len + 1] = '.';
+            clipped_left[copy_len + 2] = '.';
+            clipped_left[copy_len + 3] = '\0';
+        } else {
+            clipped_left[0] = '\0';
+        }
+    } else {
+        size_t copy_len = left_len;
+        if (copy_len >= sizeof(clipped_left)) copy_len = sizeof(clipped_left) - 1;
+        memcpy(clipped_left, left_hint, copy_len);
+        clipped_left[copy_len] = '\0';
+    }
+
+    display_text(3, y + 1, clipped_left, C_GREY, C_BG, 1);
+    display_text(rx, y + 1, right_hint, C_ACCENT, C_BG, 1);
 }

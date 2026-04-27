@@ -9,6 +9,9 @@
             "name": "PlatformIO",
             "includePath": [
                 "C:/Users/19707/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
+                "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxSeriesXControllerESP32_asukiaaa/src",
+                "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxSeriesXHIDReportBuilder_asukiaaa/src",
+                "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxControllerNotificationParser/src",
                 "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/NimBLE-Arduino/src",
                 "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/ESPAsyncWebServer/src",
                 "C:/Users/19707/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",
@@ -252,6 +255,9 @@
                 "limitSymbolsToIncludedHeaders": true,
                 "path": [
                     "C:/Users/19707/.platformio/packages/framework-arduinoespressif32/libraries/Wire/src",
+                    "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxSeriesXControllerESP32_asukiaaa/src",
+                    "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxSeriesXHIDReportBuilder_asukiaaa/src",
+                    "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/XboxControllerNotificationParser/src",
                     "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/NimBLE-Arduino/src",
                     "C:/Users/19707/Documents/Coding/ESP32BasedRobiticsPCB/.pio/libdeps/esp32s3/ESPAsyncWebServer/src",
                     "C:/Users/19707/.platformio/packages/framework-arduinoespressif32/libraries/WiFi/src",

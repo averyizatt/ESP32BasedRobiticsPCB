@@ -7,6 +7,7 @@
 
 static uint16_t _smooth  = 2048;    // EMA-filtered ADC value
 static uint8_t  _mapped  = 0xFF;    // current mapped index (0xFF = uninitialised)
+static uint8_t  _mapped_count = 0;  // item count used for the current mapping
 static uint16_t _idle_ref = 2048;   // reference for pot_moved()
 
 void pot_init() {
@@ -40,8 +41,9 @@ uint8_t pot_position(uint8_t count) {
     uint8_t idx = (uint8_t)(((uint32_t)_smooth * count) / 4096);
     if (idx >= count) idx = count - 1;
 
-    // First call or count changed — accept directly
-    if (_mapped >= count) {
+    // First call or count changed — accept directly.
+    if (_mapped_count != count || _mapped >= count) {
+        _mapped_count = count;
         _mapped = idx;
         return _mapped;
     }

@@ -54,10 +54,10 @@
 #define DISPLAY_DC    36
 #define DISPLAY_RES   39
 
-// --- Push Buttons (active LOW with internal pull-up) ---
+// --- Push Buttons (INPUT_PULLUP, active LOW) ---
 #define BUTTON1_PIN   41
 #define BUTTON2_PIN   42
-// BTN3 not populated in the current 2-button UI
+// BTN3/GPIO47 is not populated on the current hardware.
 
 // --- Hall Effect Sensors ---
 #define HALL1_PIN     1

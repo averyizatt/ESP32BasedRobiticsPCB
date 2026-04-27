@@ -103,9 +103,9 @@ static void _draw_result_box(const char *title,
     display_text_centred(x, y + 22, w, wl, C_CYAN, C_PANEL, 1);
 
     if (allow_menu) {
-        display_text_centred(x, y + 29, w, "CYCLE=RETRY SELECT=MENU", C_DKGREY, C_PANEL, 1);
+        display_text_centred(x, y + 29, w, "TOP=RETRY BOT=MENU", C_DKGREY, C_PANEL, 1);
     } else {
-        display_text_centred(x, y + 29, w, "CYCLE=RETRY", C_DKGREY, C_PANEL, 1);
+        display_text_centred(x, y + 29, w, "TOP=RETRY", C_DKGREY, C_PANEL, 1);
     }
 }
 
@@ -174,10 +174,11 @@ static void _snake_init() {
     }
 
     _snake_place_food();
-    _draw_frame("SNAKE", "POT/BTN:TURN", "HOLD=QUIT");
+    _draw_frame("SNAKE", "POT/TOP:TURN", "BOT=BACK");
 }
 
 static void _snake_draw_board() {
+    display_begin_frame();
     display_fill_rect(SN_X0, SN_Y0, SN_COLS * SN_CELL, SN_ROWS * SN_CELL, C_BG);
 
     // Border
@@ -201,6 +202,7 @@ static void _snake_draw_board() {
     char sc[16];
     snprintf(sc, sizeof(sc), "S:%u", _sn_score);
     display_text(DISP_W - (int16_t)strlen(sc) * 6 - 2, 3, sc, C_WHITE, C_PANEL, 1);
+    display_end_frame();
 }
 
 static void _snake_tick() {
@@ -255,7 +257,7 @@ static void _snake_update() {
         if (button_just_pressed(BTN_CYCLE)) {
             _snake_init();
         }
-        if (button_just_pressed(BTN_SELECT)) {
+        if (nav_back_just_pressed()) {
             _screen = GameScreen::MENU;
             _menu_needs_draw = true;
             display_clear_bg();
@@ -263,13 +265,20 @@ static void _snake_update() {
         return;
     }
 
-    // Controls — pot 3-zone (left zone=turn left, right zone=turn right) OR buttons
+    if (nav_back_just_pressed()) {
+        _screen = GameScreen::MENU;
+        _menu_needs_draw = true;
+        display_clear_bg();
+        return;
+    }
+
+    // Controls — pot 3-zone (left zone=turn left, right zone=turn right) OR top button
     {
         static uint8_t _pot_zone = 1;   // 0=left 1=centre 2=right
         uint16_t pv = _pot_raw();
         uint8_t  zone = (pv < 1200u) ? 0u : (pv > 2895u) ? 2u : 1u;
         bool turn_left  = (zone == 0 && _pot_zone != 0) || button_just_pressed(BTN_CYCLE);
-        bool turn_right = (zone == 2 && _pot_zone != 2) || button_just_pressed(BTN_SELECT);
+        bool turn_right = (zone == 2 && _pot_zone != 2);
         _pot_zone = zone;
 
         if (turn_left) {
@@ -280,15 +289,6 @@ static void _snake_update() {
             int8_t ndx = -_sn_dy, ndy = _sn_dx;
             if (!(ndx == -_sn_dx && ndy == -_sn_dy)) { _sn_dx = ndx; _sn_dy = ndy; }
         }
-    }
-
-    // Give up: hold BOTH buttons
-    if (button_is_pressed(BTN_CYCLE) && button_is_pressed(BTN_SELECT) &&
-        button_held_ms(BTN_CYCLE) > 600UL && button_held_ms(BTN_SELECT) > 600UL) {
-        _sn_done = true;
-        _sn_won = false;
-        _stats[0].losses++;
-        led_red();
     }
 
     uint32_t tick_ms = 160 - _sn_score * 2;
@@ -337,10 +337,11 @@ static void _pong_init() {
     _pong.done = false;
     _pong.won = false;
     _pong.last_frame = 0;
-    _draw_frame("PONG", "POT=PADDLE", "HOLD=QUIT");
+    _draw_frame("PONG", "POT=PADDLE", "BOT=BACK");
 }
 
 static void _pong_draw() {
+    display_begin_frame();
     display_fill_rect(0, G_CONT_Y, DISP_W, G_CONT_H, C_BG);
     display_rect(0, G_CONT_Y, DISP_W, G_CONT_H, C_DKGREY);
 
@@ -364,6 +365,7 @@ static void _pong_draw() {
     char sc[16];
     snprintf(sc, sizeof(sc), "S:%u", _pong.score);
     display_text(DISP_W - (int16_t)strlen(sc) * 6 - 2, 3, sc, C_WHITE, C_PANEL, 1);
+    display_end_frame();
 }
 
 static void _pong_update() {
@@ -371,7 +373,7 @@ static void _pong_update() {
         _pong_draw();
         _draw_result_box("GAME OVER", _pong.won, _pong.score, _stats[1], true);
         if (button_just_pressed(BTN_CYCLE)) _pong_init();
-        if (button_just_pressed(BTN_SELECT)) {
+        if (nav_back_just_pressed()) {
             _screen = GameScreen::MENU;
             _menu_needs_draw = true;
             display_clear_bg();
@@ -379,14 +381,11 @@ static void _pong_update() {
         return;
     }
 
-    {
-        static bool _pong_quit_armed = false;
-        if (button_is_pressed(BTN_SELECT) && button_held_ms(BTN_SELECT) >= 800UL && !_pong_quit_armed) {
-            _pong_quit_armed = true;
-            _pong.done = true; _pong.won = false;
-            _stats[1].losses++; led_red();
-        }
-        if (!button_is_pressed(BTN_SELECT)) _pong_quit_armed = false;
+    if (nav_back_just_pressed()) {
+        _screen = GameScreen::MENU;
+        _menu_needs_draw = true;
+        display_clear_bg();
+        return;
     }
 
     constexpr unsigned long FRAME_MS = 25;
@@ -511,10 +510,11 @@ static void _ast_init() {
 
     for (auto &r : _ast.rocks) r.active = false;
 
-    _draw_frame("ASTEROIDS", "POT=FLY", "HOLD=QUIT");
+    _draw_frame("ASTEROIDS", "POT=FLY", "BOT=BACK");
 }
 
 static void _ast_draw() {
+    display_begin_frame();
     display_fill_rect(0, G_CONT_Y, DISP_W, G_CONT_H, C_BG);
     display_rect(0, G_CONT_Y, DISP_W, G_CONT_H, C_DKGREY);
 
@@ -550,6 +550,7 @@ static void _ast_draw() {
     char sc[18];
     snprintf(sc, sizeof(sc), "S:%u", _ast.score);
     display_text(DISP_W - (int16_t)strlen(sc) * 6 - 2, 3, sc, C_WHITE, C_PANEL, 1);
+    display_end_frame();
 }
 
 static void _ast_update() {
@@ -557,7 +558,7 @@ static void _ast_update() {
         _ast_draw();
         _draw_result_box("GAME OVER", _ast.won, _ast.score, _stats[2], true, "TIME");
         if (button_just_pressed(BTN_CYCLE)) _ast_init();
-        if (button_just_pressed(BTN_SELECT)) {
+        if (nav_back_just_pressed()) {
             _screen = GameScreen::MENU;
             _menu_needs_draw = true;
             display_clear_bg();
@@ -565,14 +566,11 @@ static void _ast_update() {
         return;
     }
 
-    {
-        static bool _ast_quit_armed = false;
-        if (button_is_pressed(BTN_SELECT) && button_held_ms(BTN_SELECT) >= 800UL && !_ast_quit_armed) {
-            _ast_quit_armed = true;
-            _ast.done = true; _ast.won = false;
-            _stats[2].losses++; led_red();
-        }
-        if (!button_is_pressed(BTN_SELECT)) _ast_quit_armed = false;
+    if (nav_back_just_pressed()) {
+        _screen = GameScreen::MENU;
+        _menu_needs_draw = true;
+        display_clear_bg();
+        return;
     }
 
     constexpr unsigned long FRAME_MS = 25;
@@ -657,6 +655,34 @@ static const MenuItem MENU_ITEMS[] = {
 };
 static constexpr uint8_t MENU_LEN = sizeof(MENU_ITEMS) / sizeof(MENU_ITEMS[0]);
 static uint8_t _menu_idx = 0;
+static uint16_t _menu_pot_ref = 0;
+
+static void _draw_menu_item(uint8_t i, bool sel);
+
+static void _select_menu_item(uint8_t next) {
+    if (next == _menu_idx) return;
+    uint8_t old = _menu_idx;
+    _menu_idx = next;
+    Serial.printf("[games] %u/%u %s\n", _menu_idx + 1, MENU_LEN,
+                  MENU_ITEMS[_menu_idx].label);
+    _draw_menu_item(old, false);
+    _draw_menu_item(_menu_idx, true);
+}
+
+static bool _handle_menu_pot_scroll() {
+    constexpr int16_t POT_STEP = 520;
+    int16_t delta = (int16_t)pot_raw() - (int16_t)_menu_pot_ref;
+    if (abs(delta) < POT_STEP) return false;
+
+    int8_t steps = (int8_t)(delta / POT_STEP);
+    _menu_pot_ref += (int16_t)steps * POT_STEP;
+
+    int16_t next = (int16_t)_menu_idx + steps;
+    while (next < 0) next += MENU_LEN;
+    next %= MENU_LEN;
+    _select_menu_item((uint8_t)next);
+    return true;
+}
 
 static void _draw_menu_item(uint8_t i, bool sel) {
     constexpr int16_t ITEM_H = 16;
@@ -686,37 +712,47 @@ static void _draw_menu() {
         _draw_menu_item(i, i == _menu_idx);
     }
 
-    display_footer("NEXT", "ENTER");
-    display_text(2, G_FOOT_Y + 1, "HOLD:NEXT=BACK", C_DKGREY, C_BG, 1);
+    display_footer("TOP open", "BOT back");
 }
 
 static bool _handle_menu() {
     if (_menu_needs_draw) {
+        _menu_idx = 0;
+        _menu_pot_ref = pot_raw();
         _draw_menu();
         _menu_needs_draw = false;
     }
 
-    if (button_just_pressed(BTN_CYCLE)) {
-        uint8_t old = _menu_idx;
-        _menu_idx = (_menu_idx + 1) % MENU_LEN;
-        _draw_menu_item(old, false);
-        _draw_menu_item(_menu_idx, true);
-        return false;
+    static bool enter_was_down = false;
+    static bool back_was_down  = false;
+    bool enter_down = nav_enter_is_pressed();
+    bool back_down  = nav_back_is_pressed();
+
+    // Bottom button backs out to the main UI menu.
+    if (back_down && !back_was_down) {
+        back_was_down = true;
+        _screen = GameScreen::MENU;
+        _menu_needs_draw = true;
+        display_clear_bg();
+        return true;
     }
 
-    if (button_just_pressed(BTN_SELECT)) {
+    // Top opens the selected game. Pot moves the highlight.
+    if (enter_down && !enter_was_down) {
+        enter_was_down = true;
         _screen = MENU_ITEMS[_menu_idx].target;
-        if (_screen == GameScreen::SNAKE) _snake_init();
-        if (_screen == GameScreen::PONG) _pong_init();
+        if (_screen == GameScreen::SNAKE)     _snake_init();
+        if (_screen == GameScreen::PONG)      _pong_init();
         if (_screen == GameScreen::ASTEROIDS) _ast_init();
         led_blue();
         return false;
     }
+    enter_was_down = enter_down;
+    back_was_down  = back_down;
 
-    if (button_held_ms(BTN_CYCLE) > 600UL) {
-        _screen = GameScreen::MENU;
-        _menu_needs_draw = true;
-        return true;
+    // Pot scrolls relative to its position when the games menu opens.
+    if (_handle_menu_pot_scroll()) {
+        return false;
     }
 
     return false;

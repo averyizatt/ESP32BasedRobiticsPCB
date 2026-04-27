@@ -42,6 +42,7 @@
    - [BLE GATT Server](#ble-gatt-server)
    - [On-Device UI](#on-device-ui)
      - [Main Menu](#main-menu)
+     - [Robot Modes](#robot-modes)
      - [Games](#games)
 8. [Repository Structure](#repository-structure)
 9. [Hardware Files](#hardware-files)
@@ -84,12 +85,12 @@ The diagram below shows how all onboard subsystems connect to the ESP32-S3:
           │ VM (motor power)    │   │   │   │   │ INPUT_PULLUP             │
           ▼                     │   │   │   │   ▼                          │
     ┌───────────┐               │   │   │   │  ┌──────────────┐            │
-    │  Motor ×2 │               │   │   │   │  │  Buttons ×3  │            │
+    │  Motor ×2 │               │   │   │   │  │  Buttons ×2  │            │
     └───────────┘               │   │   │   │  └──────────────┘            │
                       PWM 50Hz  │   │   │   │                              │
                                 ▼   │   │   │ SPI                          │
                        ┌────────────┐  │   ▼                               │
-                       │  Servo ×2  │  │  ┌──────────────────┐             │
+                       │  Servo 1   │  │  ┌──────────────────┐             │
                        └────────────┘  │  │   SPI Display    │             │
                                        │  │  (ST7735 etc.)   │             │
                     HC-SR04 TRIG/ECHO  │  └──────────────────┘             │
@@ -118,17 +119,17 @@ The diagram below shows how all onboard subsystems connect to the ESP32-S3:
 |---|---|---|
 | **Microcontroller** | ESP32-S3-WROOM-1 | 240 MHz dual-core, WiFi, BT 5.0, 45 GPIOs |
 | **Motor Drivers** | 2× DRV8871 | H-bridge, 3.6 A peak, bidirectional DC control |
-| **Servo Outputs** | 2× channels | 50 Hz PWM, 1–2 ms pulse width |
+| **Servo Outputs** | 1 active channel | Servo 1 on GPIO 8; GPIO 9 is used by the menu potentiometer |
 | **Ultrasonic Sensors** | 4× HC-SR04 | 2–400 cm range, 15° beam angle |
 | **Hall Effect Sensors** | 2× inputs | Wheel speed, pulse counting, position feedback |
 | **IMU** | I2C header | MPU-6050, ICM-42688, or any I2C IMU |
 | **SPI Display** | ST7735S 160×80 | TFT_eSPI driver, tabbed on-device UI |
-| **Push Buttons** | 3× SMD tactile | Internal pull-up, debounced in firmware |
-| **Expansion** | 6× GPIO header | GPIO 37, 38, 40, 43, 44, 48 broken out |
+| **Push Buttons** | 2× SMD tactile | Top = enter/select, bottom = back/stop; debounced in firmware |
+| **Expansion** | GPIO header | GPIO 40, 43, 44, and shared GPIO 48 available for expansion |
 | **Power** | LDO + distribution | Onboard 3.3 V regulation, motor VM bus |
 | **WiFi AP** | Soft Access Point | SSID `RoboController`, live sensor dashboard |
 | **Web Dashboard** | AsyncWebSocket | Tabbed UI: sensors, WiFi scan, BLE radar, drive control |
-| **Remote Control** | WebSocket JSON | Browser joystick → motor drive; servo sliders |
+| **Remote Control** | WebSocket JSON | Browser joystick → motor drive; Servo 1 slider |
 | **BLE GATT Server** | NimBLE-Arduino | Sensor notify + motor/servo write characteristics |
 | **BLE Scanner** | Passive scan | Detect nearby BLE devices, shown on TFT and dashboard |
 
@@ -189,7 +190,7 @@ The board uses a **4-layer stackup** (1.6 mm total thickness) to provide dedicat
 | J7–J8 | Motor terminals | 2-pin screw terminal | Motor output connections |
 | J9 | Expansion header | 8-pin 2.54 mm | Breakout for unused GPIO |
 | J10 | Display header | 7-pin 2.54 mm | SPI display connector |
-| SW1–SW3 | Tactile switches | SMD | User input buttons |
+| SW1–SW2 | Tactile switches | SMD | User input buttons used by current firmware |
 
 > Full BOM with part numbers and quantities is available in [`hardware/bom/`](hardware/bom/).
 
@@ -206,7 +207,7 @@ The board uses a **4-layer stackup** (1.6 mm total thickness) to provide dedicat
 | 6 | Motor 2 PWM A | LEDC Output | 20 kHz PWM, 8-bit resolution |
 | 7 | Motor 2 PWM B | LEDC Output | 20 kHz PWM, 8-bit resolution |
 | 8 | Servo 1 | PWM Output | 50 Hz via ESP32Servo library |
-| 9 | Servo 2 | PWM Output | 50 Hz via ESP32Servo library |
+| 9 | Potentiometer | ADC Input | Main menu scroll / analog control; Servo 2 disabled in firmware |
 | 10 | Ultrasonic 1 TRIG | Digital Output | 10 µs trigger pulse |
 | 11 | Ultrasonic 1 ECHO | Digital Input | Pulse width → distance |
 | 12 | Ultrasonic 2 TRIG | Digital Output | |
@@ -217,15 +218,15 @@ The board uses a **4-layer stackup** (1.6 mm total thickness) to provide dedicat
 | 17 | Ultrasonic 4 ECHO | Digital Input | |
 | 18 | I2C SDA (IMU) | I2C | 400 kHz fast mode |
 | 21 | I2C SCL (IMU) | I2C | 400 kHz fast mode |
-| 33 | SPI MOSI (Display) | SPI | |
-| 34 | SPI SCLK (Display) | SPI | |
 | 35 | SPI CS | SPI | Active low chip select |
 | 36 | SPI DC | Digital Output | Data/Command select |
+| 37 | SPI MOSI (Display) | SPI | SDA label on display module |
+| 38 | SPI SCLK (Display) | SPI | SCL label on display module |
 | 39 | SPI RES | Digital Output | Display reset |
 | 41 | Button 1 | Digital Input | `INPUT_PULLUP`, active LOW |
 | 42 | Button 2 | Digital Input | `INPUT_PULLUP`, active LOW |
-| 47 | Button 3 | Digital Input | `INPUT_PULLUP`, active LOW |
-| 37, 38, 40, 43, 44, 48 | Expansion Header | GPIO | General purpose — broken out to J9 |
+| 48 | Onboard RGB LED | Digital Output | WS2812 / NeoPixel |
+| 40, 43, 44 | Expansion Header | GPIO | General purpose — broken out to J9 |
 
 ---
 
@@ -267,12 +268,12 @@ motor_coast(MotorId::MOTOR2);
 
 ### Servo Outputs
 
-Two standard RC servo channels output 50 Hz PWM signals compatible with any hobby servo.
+Servo 1 outputs a standard 50 Hz RC-servo PWM signal compatible with common hobby servos. Servo 2 hardware exists on GPIO 9, but the current firmware repurposes GPIO 9 as the ADC potentiometer input, so only Servo 1 is active.
 
 | Servo | GPIO | Pulse Width Range |
 |---|---|---|
 | Servo 1 | 8 | 1000–2000 µs |
-| Servo 2 | 9 | 1000–2000 µs |
+| Servo 2 | 9 | Disabled in current firmware; GPIO 9 is `POT_PIN` |
 
 **Pulse width to angle mapping:**
 
@@ -283,9 +284,8 @@ Two standard RC servo channels output 50 Hz PWM signals compatible with any hobb
 ```
 
 ```cpp
-// Example: center both servos
+// Example: center Servo 1
 servo_set_angle(ServoId::SERVO1, 90);
-servo_set_angle(ServoId::SERVO2, 90);
 ```
 
 ---
@@ -373,8 +373,8 @@ An SPI display connector supports ST7735, ST7789, ILI9341, or any SPI display wi
 
 | Signal | GPIO | Function |
 |---|---|---|
-| MOSI (SDA) | 33 | Data to display |
-| SCLK (SCL) | 34 | SPI clock |
+| MOSI (SDA) | 37 | Data to display |
+| SCLK (SCL) | 38 | SPI clock |
 | CS | 35 | Chip select (active LOW) |
 | DC | 36 | Data / Command select |
 | RES | 39 | Hardware reset |
@@ -385,22 +385,25 @@ The firmware uses **TFT_eSPI** for hardware-accelerated graphics and text render
 
 ### Push Buttons
 
-Three SMD tactile push buttons provide user input. All are wired active-LOW with internal pull-ups enabled in firmware.
+The current firmware uses two tactile buttons. Firmware enables `INPUT_PULLUP`, treats `LOW` as pressed, and applies software debouncing with `BUTTON_DEBOUNCE_MS` (default 20 ms).
 
-| Button | GPIO | Pull Configuration |
+| Button | GPIO | UI Role |
 |---|---|---|
-| Button 1 | 41 | `INPUT_PULLUP` (active LOW) |
-| Button 2 | 42 | `INPUT_PULLUP` (active LOW) |
-| Button 3 | 47 | `INPUT_PULLUP` (active LOW) |
+| Top button / Button 1 | 41 | Enter, open, select, primary action |
+| Bottom button / Button 2 | 42 | Back, stop, return to menu |
 
-Software debouncing is applied with a configurable debounce window (`BUTTON_DEBOUNCE_MS`, default 20 ms).
+GPIO 47 / Button 3 is not populated or used by the current 2-button UI.
 
 ```cpp
 // Example: detect button press events
 buttons_update();   // call every loop iteration
 
-if (button_just_pressed(ButtonId::BTN1)) {
-    // single-shot event — true on the first loop after press
+if (nav_enter_just_pressed()) {
+    // top button pressed
+}
+
+if (nav_back_just_pressed()) {
+    // bottom button pressed
 }
 ```
 
@@ -408,16 +411,16 @@ if (button_just_pressed(ButtonId::BTN1)) {
 
 ### Expansion Header
 
-Six GPIO pins are broken out on **J9** for custom peripherals, additional sensors, or future expansion.
+Several GPIO pins are broken out on **J9** for custom peripherals, additional sensors, or future expansion. Some physical header pins are shared with active firmware functions, so check `config.h` before reusing them.
 
 | Header Pin | GPIO | Notes |
 |---|---|---|
-| 1 | 37 | General purpose |
-| 2 | 38 | General purpose |
+| 1 | 37 | SPI display MOSI in current firmware |
+| 2 | 38 | SPI display SCLK in current firmware |
 | 3 | 40 | General purpose |
 | 4 | 43 | UART0 TX (also used for USB CDC) |
 | 5 | 44 | UART0 RX (also used for USB CDC) |
-| 6 | 48 | General purpose / RGB LED capable |
+| 6 | 48 | Onboard RGB LED / WS2812 |
 | 7 | 3.3 V | Power rail |
 | 8 | GND | Ground |
 
@@ -482,11 +485,14 @@ ESP32RoboticsController/
 ├── imu.h / imu.cpp                  ← I2C IMU read abstraction (MPU-6050)
 ├── buttons.h / buttons.cpp          ← Debounced button state machine
 ├── led.h / led.cpp                  ← Onboard LED control
-├── pot.h                            ← Potentiometer / ADC helper
+├── pot.h / pot.cpp                  ← Potentiometer / ADC helper
 │
 ├── display.h / display.cpp          ← TFT_eSPI display abstraction + colour palette
 ├── ui.h / ui.cpp                    ← On-device tabbed UI state machine
 ├── games.h / games.cpp              ← Mini-game / demo logic
+├── autonomous_modes.h / autonomous_modes.cpp
+│                                      ← Autonomous driving state machine
+├── robot_modes.h / robot_modes.cpp  ← Robot mode selector + active-mode runner
 │
 └── wifi_server.h / wifi_server.cpp  ← WiFi soft AP, AsyncWebServer, WebSocket push,
                                         BLE GATT server, WiFi/BLE scanner helpers
@@ -524,7 +530,7 @@ The dashboard is a single-page app served from PROGMEM with four tabs:
 | **Sensors** | Live IMU (accel + gyro axis bars), ultrasonic proximity radar, heap gauge, hall encoder counts, button tiles, uptime |
 | **WiFi Scanner** | Scan nearby networks — SSID, signal strength bar, channel, security badge |
 | **BLE Radar** | Scan for BLE devices — name, RSSI, MAC address |
-| **Control** | Virtual joystick (touch + mouse), dual servo sliders, emergency stop, command log |
+| **Control** | Virtual joystick (touch + mouse), Servo 1 control, emergency stop, command log |
 
 Sensor data is pushed over **WebSocket** (no polling) at a configurable interval (`WIFI_WS_PUSH_MS`, default 200 ms).
 
@@ -544,7 +550,7 @@ The robot accepts inbound JSON commands over the same WebSocket connection:
 // Drive both motors (speed: -255 to +255)
 { "t": "drive", "l": 200, "r": -150 }
 
-// Set servo angle (id: 1 or 2, angle: 0–180°)
+// Set Servo 1 angle (angle: 0–180°)
 { "t": "servo", "id": 1, "angle": 90 }
 
 // Emergency stop — coasts both motors
@@ -579,9 +585,11 @@ The sensor characteristic sends a live data notification every **500 ms** when a
 A tabbed menu system runs on the 160×80 TFT display. Navigation uses two push buttons and the onboard potentiometer. An auto-idle screensaver activates after 20 seconds of inactivity.
 
 **Navigation:**
-- **BTN1 (CYCLE)** — scroll to next item / primary action in games
-- **BTN2 (SELECT)** — confirm / enter / secondary action in games
-- **Potentiometer** — scroll lists, pilot characters in games, adjust values
+- **Top button / GPIO 41** — enter, open, select, or primary action
+- **Bottom button / GPIO 42** — back, stop active mode, or return to menu
+- **Potentiometer** — main menu selection and analog controls inside demos/games
+
+In the main menu the potentiometer maps directly across the list: pot minimum selects the first item, and pot maximum selects the last item. It does not wrap around.
 
 #### Main Menu
 
@@ -593,12 +601,27 @@ A tabbed menu system runs on the 160×80 TFT display. Navigation uses two push b
 | Motors | Live readout | Current motor speed and direction for both motor channels |
 | Ultrasonic | Radar demo | Real-time 4-direction proximity radar on TFT |
 | Hall Demo | Live readout | Wheel pulse counts and pulses-per-second for both encoder channels |
-| Servo Demo | Auto sweep | Automated servo 1 & 2 sweep from 0° → 180° → 0° |
+| Servo Demo | Manual servo control | Servo 1 starts at 90°; moving the pot commands 0–180° |
 | System | Info screen | Firmware uptime, heap usage, CPU frequency, chip info |
 | Games | Sub-menu | Arcade game launcher (see Games section below) |
+| Robot Modes | Sub-menu | Autonomous / RC mode launcher; bottom button stops active mode |
 | WiFi Info | Info screen | AP SSID, password, IP address, connected client count |
 | WiFi Scan | Scanner | Nearby WiFi networks with RSSI bars; pot scrolls list |
 | BLE Radar | Scanner | Nearby BLE devices with RSSI bars; 4-second active scan |
+
+#### Robot Modes
+
+The Robot Modes menu starts the autonomous-mode engine from the display UI. The top button starts the highlighted mode, the bottom button exits the menu, and while a mode is running the bottom button stops the mode and returns to the Robot Modes list.
+
+| Mode | Description |
+|---|---|
+| RC Control | Xbox BLE joystick / tank-drive control |
+| UART Control | UART-commanded forward control |
+| Socket Ctrl | Socket motor pass-through |
+| Autonomous | Advanced state-machine mode |
+| Simple Auto | PID forward motion with recovery behavior |
+| Wall Follow | Left-hand PID wall follower |
+| Premap Nav | Map-seeded autonomous navigation |
 
 #### Games
 
@@ -614,7 +637,7 @@ The Games menu launches a sub-menu with three sprite-rendered arcade games. All 
 |---|---|
 | Grid | 40 × 14 cells (4 px each) |
 | Win condition | Score 20 food pieces |
-| Controls | Potentiometer (turn left/right) or BTN1/BTN2 (turn right/left) |
+| Controls | Potentiometer zones or top button to turn; bottom returns from game-over/menu screens |
 | Speed | Increases with score (160 ms → 50 ms minimum tick) |
 | Visual effects | Gradient tail fade, pulsing food, particle burst on eat/death, screen shake on collision |
 
@@ -628,7 +651,7 @@ The Games menu launches a sub-menu with three sprite-rendered arcade games. All 
 |---|---|
 | Win condition | 10 paddle hits |
 | Lives | 3 |
-| Controls | Potentiometer maps directly to paddle Y position; BTN1 nudges up |
+| Controls | Potentiometer maps directly to paddle Y position; top button retries from game-over |
 | Difficulty | Ball speed +0.15 per hit, capped at 5.5 px/frame |
 | Visual effects | 6-frame ball trail, glowing neon paddle, particle bursts on wall/paddle hits, screen shake on miss |
 
@@ -642,7 +665,7 @@ The Games menu launches a sub-menu with three sprite-rendered arcade games. All 
 |---|---|
 | Win condition | Survive 1500 score ticks (~37 s at 40 fps) |
 | Lives | 3 |
-| Controls | Potentiometer steers ship Y (smoothed); BTN1 held = thrust boost upward |
+| Controls | Potentiometer steers ship Y (smoothed); top button retries from game-over |
 | Difficulty | Rock speed 2.2 → 5.0 px/frame; spawn interval 1100 → 350 ms |
 | Visual effects | 3-layer parallax starfield, procedural 8-vertex asteroid shapes, thruster flame + exhaust particles, invulnerability blink after hit, screen shake on collision |
 
@@ -674,10 +697,14 @@ ESP32BasedRobiticsPCB/
 │       ├── imu.h / imu.cpp            ← MPU-6050 I2C abstraction
 │       ├── buttons.h / buttons.cpp    ← Debounced buttons
 │       ├── led.h / led.cpp            ← Onboard LED
-│       ├── pot.h                      ← ADC potentiometer
+│       ├── pot.h / pot.cpp            ← ADC potentiometer
 │       ├── display.h / display.cpp    ← TFT_eSPI wrapper + colour palette
 │       ├── ui.h / ui.cpp              ← On-device tabbed UI state machine
 │       ├── games.h / games.cpp        ← Demo / mini-game logic
+│       ├── autonomous_modes.h / autonomous_modes.cpp
+│       │                                ← Autonomous driving state machine
+│       ├── robot_modes.h / robot_modes.cpp
+│       │                                ← Robot mode selector + active-mode runner
 │       └── wifi_server.h / wifi_server.cpp  ← WiFi AP, web dashboard,
 │                                              WebSocket, BLE GATT
 │
@@ -698,7 +725,7 @@ ESP32BasedRobiticsPCB/
 KiCad design files are in the [`hardware/`](hardware/) directory.
 
 1. Install [KiCad 7](https://www.kicad.org/download/) or later
-2. Open `hardware/ESP32RoboticsController.kicad_pro`
+2. Open `hardware/kicadProject/Tank.kicad_pro`
 3. The schematic opens in **Eeschema**; the PCB layout opens in **Pcbnew**
 
 **Generating Gerbers for fabrication** (Pcbnew → File → Fabrication Outputs → Gerbers):

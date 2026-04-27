@@ -6,8 +6,8 @@
 // UI — Boot sequence, main menu, sub-screens, idle animation
 // =============================================================================
 // Navigation:
-//   BTN_CYCLE  (BTN1) — advance cursor / cycle through items
-//   BTN_SELECT (BTN2) — confirm selection / return to menu from sub-screens
+//   BTN_TOP    (GPIO 41) — next / enter
+//   BTN_BOTTOM (GPIO 42) — back
 // =============================================================================
 
 // Run the animated boot sequence and peripheral self-test.

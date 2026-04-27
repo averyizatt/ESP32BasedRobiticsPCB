@@ -7,17 +7,25 @@
 // Push Button Interface — debounced digital inputs
 // =============================================================================
 // Navigation uses two buttons:
-//   BTN1 (BUTTON1_PIN) — Cycle / Next
-//   BTN2 (BUTTON2_PIN) — Select / Confirm
-// All buttons use INPUT_PULLUP. Pressed = LOW.
+//   BTN1 (BUTTON1_PIN, GPIO 41) — Enter / open
+//   BTN2 (BUTTON2_PIN, GPIO 42) — Back
+// Buttons use INPUT_PULLUP and are active LOW, matching the original
+// known-good button path.
 // =============================================================================
 
 // Button identifiers
 enum class ButtonId : uint8_t { BTN1 = 0, BTN2 = 1 };
 
-// Convenience aliases for the two navigation buttons
-static constexpr ButtonId BTN_CYCLE  = ButtonId::BTN1;
-static constexpr ButtonId BTN_SELECT = ButtonId::BTN2;
+// Convenience aliases for the two navigation buttons.
+static constexpr ButtonId BTN_TOP    = ButtonId::BTN1;
+static constexpr ButtonId BTN_BOTTOM = ButtonId::BTN2;
+static constexpr ButtonId BTN_ENTER  = ButtonId::BTN1;
+static constexpr ButtonId BTN_BACK   = ButtonId::BTN2;
+static constexpr ButtonId BTN_NEXT   = BTN_ENTER;
+
+// Legacy names kept so older modules still compile while sharing the new map.
+static constexpr ButtonId BTN_CYCLE  = BTN_ENTER;
+static constexpr ButtonId BTN_SELECT = BTN_BACK;
 
 // Initialise button GPIO pins.
 void buttons_init();
@@ -36,3 +44,9 @@ bool button_just_released(ButtonId btn);
 
 // Return how many ms the button has been continuously held (0 if not pressed).
 unsigned long button_held_ms(ButtonId btn);
+
+// Navigation helpers.
+bool nav_enter_is_pressed();
+bool nav_enter_just_pressed();
+bool nav_back_is_pressed();
+bool nav_back_just_pressed();

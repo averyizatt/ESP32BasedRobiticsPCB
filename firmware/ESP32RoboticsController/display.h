@@ -78,6 +78,12 @@ void display_text_centred(int16_t x, int16_t y, int16_t w,
 void display_clear();
 void display_clear_bg();   // fill with C_BG instead of black
 
+// Frame batching — bracket a block of draw calls to hold SPI CS asserted
+// for the whole frame. TFT_eSPI nests these safely so inner primitives
+// don't pay the CS assert/deassert overhead on each call.
+void display_begin_frame();
+void display_end_frame();
+
 // Header bar with gradient-look (two-tone) and bottom accent line.
 void display_header(const char *title, uint8_t height = 13);
 

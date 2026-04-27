@@ -24,9 +24,15 @@
 // by TFT_INVERSION_ON below.
 #define ST7735_BLACKTAB
 
-// SPI speed
-#define SPI_FREQUENCY       27000000
+// SPI speed — 40 MHz is the sweet-spot for ST7735S clones on ESP32-S3.
+// (Datasheet max is 15.15 MHz but virtually all panels handle 40 MHz fine;
+//  80 MHz may cause pixel corruption.)
+#define SPI_FREQUENCY       40000000
 #define SPI_READ_FREQUENCY   6000000
+
+// Enable DMA: SPI pixel data is transferred by the DMA controller while
+// the CPU is already preparing the next draw call.
+#define USE_DMA_TO_TFT
 
 // Fonts to compile in
 #define LOAD_GLCD    // Font 1 — 6×8 pixel, default
